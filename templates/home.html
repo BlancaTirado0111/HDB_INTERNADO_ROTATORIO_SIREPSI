@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Panel principal</h2>
+<p>Selecciona una opción:</p>
+
+<div class="card-grid">
+  <div class="card">
+    <h3>Medicamentos</h3>
+    <p>Catálogo de medicamentos controlados.</p>
+    <a class="btn" href="{% url 'medicamentos' %}">Ver lista</a>
+  </div>
+
+  <div class="card">
+    <h3>Movimientos</h3>
+    <p>Ingresos / egresos (kardex).</p>
+    <a class="btn" href="#">Ver movimientos</a>
+  </div>
+
+  <div class="card">
+    <h3>Prescripciones</h3>
+    <p>Paciente, doctor, fecha, medicamento.</p>
+    <a class="btn" href="#">Ver prescripciones</a>
+  </div>
+</div>
+
+{% endblock %}

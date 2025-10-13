@@ -1,0 +1,31 @@
+{% load static %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>SIREPSI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="{% static 'theme/app.css' %}" rel="stylesheet">
+</head>
+<body>
+  <header class="app-header">
+    <div class="container">
+      <h1>SIREPSI • Sistema de reportes</h1>
+      <nav class="nav">
+        <a href="{% url 'home' %}">Inicio</a>
+        <a href="{% url 'medicamentos' %}">Medicamentos</a>
+        <a href="#">Movimientos</a>
+        <a href="#">Prescripciones</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="app-footer">
+    <div class="container">v0.1 • UATF</div>
+  </footer>
+</body>
+</html>
