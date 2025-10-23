@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Kardex{% endblock %}
+
+{% block content %}
+
+<style>
+  .print-only { display: none; }
+
+  @media print {
+    body * { visibility: hidden; }
+    .print-area, .print-area * { visibility: visible; }
+    .print-area {
+      position: absolute;
+      left: 0; top: 0;
+      width: 100%;
+      margin: 0; padding: 0;
+    }
+    .app-header, .app-footer, .kardex-form, .btn, .nav { display: none !important; }
+
+    .print-only { display: block !important; }
+
+    .table { border-collapse: collapse !important; }
+    .table th, .table td { border: 1px solid #ccc !important; padding: 6px !important; }
+  }
+</style>
+
+<h2 class="mb-3">Kardex</h2>
+
+<form method="get" class="row g-3 align-items-end kardex-form">
+  <div class="col-md-6">
+    <label class="form-label">Nombre del medicamento</label>
+
+    <!-- Campo con autocompletado -->
+    <div class="position-relative" id="ac-wrapper">
+      <input type="text" name="q" id="input-medicamento"
+             class="form-control"
+             placeholder="Escribe el nombre..."
+             autocomplete="off"
+             value="{{ q|default:'' }}">
+      <div id="ac-list"
+           class="list-group shadow-sm"
+           style="position:absolute; z-index:1000; width:100%; display:none; max-height:260px; overflow:auto;">
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-2">
+    <label class="form-label">Almacén</label>
+    <input type="number" name="almacen" class="form-control" value="{{ almacen|default:'31' }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label">Desde</label>
+    <input type="date" name="desde" class="form-control" value="{{ desde|default:'' }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label">Hasta</label>
+    <input type="date" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
+  </div>
+
+  <div class="col-12 d-flex gap-2">
+    <button class="btn btn-success">
+      <i class="bi bi-search me-1"></i> Buscar
+    </button>
+
+    {% if encabezado %}
+      <button id="btnPrint" type="button" class="btn btn-outline-secondary">
+        <i class="bi bi-printer me-1"></i> Imprimir
+      </button>
+    {% endif %}
+  </div>
+</form>
+
+{# --- Autocomplete --- #}
+<script>
+(function() {
+  const $input = document.getElementById('input-medicamento');
+  const $list  = document.getElementById('ac-list');
+  let lastQuery = '';
+  let controller = null;
+
+  function hideList() { $list.style.display = 'none'; }
+  function showList() { $list.style.display = 'block'; }
+
+  function render(items) {
+    if (!items.length) { hideList(); return; }
+    $list.innerHTML = '';
+    items.forEach(it => {
+      const a = document.createElement('a');
+      a.href = '#';
+      a.className = 'list-group-item list-group-item-action';
+      a.textContent = it.label;
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        $input.value = it.label;  // usamos la etiqueta completa
+        hideList();
+      });
+      $list.appendChild(a);
+    });
+    showList();
+  }
+
+  async function fetchSug(q) {
+    if (controller) controller.abort();
+    controller = new AbortController();
+    const url = "{% url 'meds_suggest' %}?q=" + encodeURIComponent(q);  // <---- SIN namespace
+    try {
+      const res = await fetch(url, {signal: controller.signal});
+      if (!res.ok) return render([]);
+      const data = await res.json();
+      render(data.results || []);
+    } catch(e) {
+      render([]);
+    }
+  }
+
+  let debounce;
+  $input.addEventListener('input', () => {
+    const q = $input.value.trim();
+    if (q === lastQuery) return;
+    lastQuery = q;
+    clearTimeout(debounce);
+    if (q.length < 2) { hideList(); return; }
+    debounce = setTimeout(() => fetchSug(q), 180);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('ac-wrapper').contains(e.target)) hideList();
+  });
+
+  $input.addEventListener('focus', () => {
+    if (($list.innerHTML || '').trim().length) showList();
+  });
+})();
+</script>
+
+{% if error %}
+  <div class="alert alert-warning mt-3">{{ error }}</div>
+{% endif %}
+
+{% if encabezado %}
+  <hr class="mt-4">
+
+  <!-- SOLO esto se imprime -->
+  <div class="print-area">
+    <div class="print-only mb-3">
+      <h2 class="mb-0">Anexo 15 – Kardex de Psicotrópicos</h2>
+      {% if desde and hasta %}
+        <small>Rango: {{ desde }} a {{ hasta }} &middot; Almacén: {{ almacen }}</small>
+      {% endif %}
+      <hr>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6">
+        <p><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
+        <p><strong>DCI:</strong> {{ encabezado.dci }}</p>
+        <p><strong>Laboratorio:</strong> {{ encabezado.laboratorio }}</p>
+      </div>
+      <div class="col-md-6">
+        <p><strong>Concentración:</strong> {{ encabezado.concentracion }}</p>
+        <p><strong>Presentación:</strong> {{ encabezado.presentacion }}</p>
+        <p><strong>Código / Codificación:</strong> {{ encabezado.med_codigo }} / {{ encabezado.codificacion }}</p>
+      </div>
+    </div>
+
+    {% if rows %}
+      <div class="table-responsive mt-3">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Fecha</th>
+              <th>Cant. ingreso</th>
+              <th>Nombre paciente</th>
+              <th>Nombre médico</th>
+              <th>Nº receta</th>
+              <th>Cant. egreso</th>
+              <th>Saldo anterior</th>
+              <th>Saldo actual</th>
+              <th>Observaciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                <td>{{ r.fecha }}</td>
+                <td class="text-end">{{ r.cantidad_ingreso }}</td>
+                <td>{{ r.nombre_paciente }}</td>
+                <td>{{ r.nombre_medico }}</td>
+                <td>{{ r.no_receta }}</td>
+                <td class="text-end">{{ r.cantidad_egreso }}</td>
+                <td class="text-end">{{ r.saldo_anterior }}</td>
+                <td class="text-end">{{ r.saldo_actual }}</td>
+                <td>{{ r.observaciones }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-info mt-3">Sin movimientos en el rango seleccionado.</div>
+    {% endif %}
+  </div>
+{% endif %}
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var btn = document.getElementById('btnPrint');
+    if (btn) {
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        window.print();
+      });
+    }
+  });
+</script>
+
+{% endblock %}

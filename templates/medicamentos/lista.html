@@ -4,6 +4,12 @@
 {% block content %}
 <h2 class="mb-3">Catálogo de medicamentos</h2>
 
+<div class="d-flex justify-content-end mb-2">
+  <span class="badge text-bg-success">
+    Total: {{ page_obj.paginator.count }}
+  </span>
+</div>
+
 <div class="table-responsive">
   <table class="table table-sm table-striped align-middle">
     <thead class="table-light">
@@ -18,7 +24,7 @@
       </tr>
     </thead>
     <tbody>
-      {% for f in filas %}
+      {% for f in page_obj.object_list %}
       <tr>
         <td>{{ f.codigo }}</td>
         <td>{{ f.codificacion }}</td>
@@ -36,4 +42,42 @@
     </tbody>
   </table>
 </div>
+
+<!-- Paginación compacta (segura) -->
+<nav aria-label="Paginación" class="mt-3">
+  <ul class="pagination flex-wrap">
+
+    {# Flecha Anterior: solo link si existe anterior #}
+    {% if page_obj.has_previous %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_obj.previous_page_number }}">«</a>
+      </li>
+    {% else %}
+      <li class="page-item disabled"><span class="page-link">«</span></li>
+    {% endif %}
+
+    {# Ventana compacta #}
+    {% for p in pages_compact %}
+      {% if p %}
+        {% if p == page_obj.number %}
+          <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+        {% else %}
+          <li class="page-item"><a class="page-link" href="?page={{ p }}">{{ p }}</a></li>
+        {% endif %}
+      {% else %}
+        <li class="page-item disabled"><span class="page-link">…</span></li>
+      {% endif %}
+    {% endfor %}
+
+    {# Flecha Siguiente: solo link si existe siguiente #}
+    {% if page_obj.has_next %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_obj.next_page_number }}">»</a>
+      </li>
+    {% else %}
+      <li class="page-item disabled"><span class="page-link">»</span></li>
+    {% endif %}
+
+  </ul>
+</nav>
 {% endblock %}
