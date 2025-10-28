@@ -1,17 +1,14 @@
 # sirepsi/views.py
 from datetime import datetime, date, timedelta
+
 from django.core.paginator import Paginator
+from django.http import JsonResponse
 from django.shortcuts import render
 
 from .dbutils import query_bdfarmacia
 
 
-# sirepsi/views.py  (añade los imports si no los tienes)
-from django.http import JsonResponse
-from django.db import connection  # no imprescindible; usamos tu helper query_bdfarmacia
-from .dbutils import query_bdfarmacia
-
-# ---------------------- HOME / UTILES ----------------------
+# ===================== HOME / UTILES =====================
 
 def home(request):
     return render(request, "home.html")
@@ -29,9 +26,7 @@ def _page_window(page_obj, window: int = 2):
     current = page_obj.number
     total = page_obj.paginator.num_pages
 
-    pages = set()
-    pages.add(1)
-    pages.add(total)
+    pages = {1, total}
 
     for p in range(current - window, current + window + 1):
         if 1 <= p <= total:
@@ -53,7 +48,7 @@ def _page_window(page_obj, window: int = 2):
     return compact
 
 
-# ---------------------- MEDICAMENTOS (LISTA) ----------------------
+# ===================== MEDICAMENTOS (LISTA) =====================
 
 def medicamentos(request):
     sql = """
@@ -88,140 +83,105 @@ def medicamentos(request):
     return render(request, "medicamentos/lista.html", context)
 
 
-# ---------------------- MOVIMIENTOS (KARDEX) ----------------------
+# ===================== MOVIMIENTOS (KARDEX) =====================
+# -------- Lista base (para el modal) ----------
+PSYCH_LIST = [
+    ("N0501", "Alprazolam"),
+    ("N0306", "Clonazepam"),
+    ("N0312", "Clonazepam"),
+    ("N0504", "Diazepam"),
+    ("N0505", "Diazepam"),
+    ("N0309", "Fenobarbital"),
+    ("N0310", "Fenobarbital"),
+    ("N0311", "Fenobarbital"),
+    ("N0105", "Fentanilo con conservante"),
+    ("N0106", "Fentanilo sin conservante"),
+    ("N0511", "Midazolam"),
+    ("N0206", "Morfina"),
+    ("N0207", "Morfina (con o sin conservante)"),
+    ("N0116", "Remifentanilo"),
+]
 
-def _parse_med_query(q: str):
+
+def meds_suggest(request):
     """
-    Acepta entradas como:
-      - "355" (MED_CODIGO)
-      - "N0501" (MED_CODIFICACION)
-      - "355/N0501/ALPRAZOLAM" (combinado)
-      - "ALPRAZOLAM" (parte del nombre)
-    Devuelve un dict con med_codigo / codificacion / nombre o None.
-    IMPORTANTE: el comodín va en el parámetro (LIKE %s) para evitar errores
-    del driver mssql con los porcentajes en el SQL.
+    API para el modal: devuelve hasta 20 medicamentos de la lista base,
+    filtrados por 'q' (contiene en código o nombre, sin mayúsculas).
     """
+    q = (request.GET.get("q") or "").strip().lower()
+    results = []
+    for code, name in PSYCH_LIST:
+        if not q or (q in code.lower()) or (q in name.lower()):
+            results.append({"code": code, "label": f"{code} — {name}"})
+        if len(results) >= 20:
+            break
+    return JsonResponse({"results": results})
+
+
+# -------- Resolver medicamento (solo por nombre/código) ----------
+def _resolve_med_by_name_or_code(name_or_code: str):
+    """
+    1) Intenta contra la lista base: si coincide por nombre (contiene) o código exacto,
+       busca el medicamento por MED_CODIFICACION.
+    2) Si no, intenta por nombre (LIKE %nombre%) en MED_COMERCIAL o MED_GENERICO.
+    Devuelve dict con: med_codigo, codificacion, nombre, dci, concentracion, presentacion, laboratorio.
+    """
+    q = (name_or_code or "").strip()
     if not q:
         return None
 
-    q = str(q).strip()
-    parts = [p.strip() for p in q.split("/") if p.strip()]
-
-    med_codigo = None
-    if parts and parts[0].isdigit():
-        med_codigo = int(parts[0])
-
-    cod = None
-    for p in parts:
-        if len(p) <= 10 and any(ch.isalpha() for ch in p) and any(ch.isdigit() for ch in p):
-            cod = p
+    # ¿match por lista base?
+    pick_code = None
+    for code, name in PSYCH_LIST:
+        if q.lower() in name.lower() or q.upper() == code.upper():
+            pick_code = code
             break
 
-    sql = """
-        SELECT TOP(1)
-            m.MED_CODIGO       AS med_codigo,
-            m.MED_CODIFICACION AS codificacion,
-            m.MED_COMERCIAL    AS nombre,
-            m.med_generico     AS dci,
-            m.med_concentracion AS concentracion,
-            m.med_unidad       AS presentacion
-        FROM dbo.fa_medicamento m
-        WHERE
-              ( %s IS NOT NULL AND m.MED_CODIGO = %s )
-           OR ( %s IS NOT NULL AND m.MED_CODIFICACION = %s )
-           OR ( m.MED_COMERCIAL LIKE %s )
-        ORDER BY
-          CASE WHEN %s IS NOT NULL AND m.MED_CODIGO = %s THEN 0 ELSE 1 END,
-          CASE WHEN %s IS NOT NULL AND m.MED_CODIFICACION = %s THEN 0 ELSE 1 END
-    """
-    like_param = f"%{q}%"
-    params = [
-        med_codigo, med_codigo,
-        cod, cod,
-        like_param,
-        med_codigo, med_codigo,
-        cod, cod,
-    ]
-
-    filas = query_bdfarmacia(sql, params)
-    return filas[0] if filas else None
-
-
-# ---------------------- MOVIMIENTOS (KARDEX) ----------------------
-from datetime import datetime, date, timedelta
-from django.shortcuts import render
-from .dbutils import query_bdfarmacia
-
-def _resolve_med_from_name_or_code(q: str):
-    """
-    Prioriza BUSCAR POR NOMBRE (exacto / empieza / contiene).
-    Si no encuentra, cae a MED_CODIGO o MED_CODIFICACION.
-    Devuelve un dict con med_codigo, codificacion, nombre, dci, etc. o None.
-    """
-    if not q:
-        return None
-    q = q.strip()
-
-    # 1) nombre exacto (case-insensitive)
-    sql = """
-        SELECT TOP(1)
-           m.MED_CODIGO AS med_codigo, m.MED_CODIFICACION AS codificacion,
-           m.MED_COMERCIAL AS nombre, m.med_generico AS dci,
-           m.med_concentracion AS concentracion, m.med_unidad AS presentacion
-        FROM dbo.fa_medicamento m
-        WHERE UPPER(m.MED_COMERCIAL) = UPPER(%s)
-        ORDER BY m.MED_COMERCIAL
-    """
-    rows = query_bdfarmacia(sql, [q])
-    if rows: return rows[0]
-
-    # 2) nombre que empieza por...
-    sql = """
-        SELECT TOP(1)
-           m.MED_CODIGO AS med_codigo, m.MED_CODIFICACION AS codificacion,
-           m.MED_COMERCIAL AS nombre, m.med_generico AS dci,
-           m.med_concentracion AS concentracion, m.med_unidad AS presentacion
-        FROM dbo.fa_medicamento m
-        WHERE m.MED_COMERCIAL LIKE %s
-        ORDER BY LEN(m.MED_COMERCIAL), m.MED_COMERCIAL
-    """
-    rows = query_bdfarmacia(sql, [q + "%"])
-    if rows: return rows[0]
-
-    # 3) nombre que contiene...
-    rows = query_bdfarmacia(sql, ["%" + q + "%"])
-    if rows: return rows[0]
-
-    # 4) ¿vino MED_CODIGO?
-    if q.isdigit():
+    if pick_code:
         sql = """
             SELECT TOP(1)
-               m.MED_CODIGO AS med_codigo, m.MED_CODIFICACION AS codificacion,
-               m.MED_COMERCIAL AS nombre, m.med_generico AS dci,
-               m.med_concentracion AS concentracion, m.med_unidad AS presentacion
+              m.MED_CODIGO         AS med_codigo,
+              m.MED_CODIFICACION   AS codificacion,
+              m.MED_COMERCIAL      AS nombre,
+              m.med_generico       AS dci,
+              m.med_concentracion  AS concentracion,
+              m.med_unidad         AS presentacion,
+              p.PRO_NOMBRE         AS laboratorio
             FROM dbo.fa_medicamento m
-            WHERE m.MED_CODIGO = %s
+            LEFT JOIN dbo.fa_proveedor p ON p.Emp_Codigo = m.emp_codigo
+            WHERE m.MED_CODIFICACION = %s
         """
-        rows = query_bdfarmacia(sql, [int(q)])
-        if rows: return rows[0]
+        rows = query_bdfarmacia(sql, [pick_code])
+        if rows:
+            return rows[0]
 
-    # 5) ¿vino codificación tipo N0501?
+    # fallback: por nombre (contiene) en toda la BD (comercial o genérico)
     sql = """
         SELECT TOP(1)
-           m.MED_CODIGO AS med_codigo, m.MED_CODIFICACION AS codificacion,
-           m.MED_COMERCIAL AS nombre, m.med_generico AS dci,
-           m.med_concentracion AS concentracion, m.med_unidad AS presentacion
+          m.MED_CODIGO         AS med_codigo,
+          m.MED_CODIFICACION   AS codificacion,
+          m.MED_COMERCIAL      AS nombre,
+          m.med_generico       AS dci,
+          m.med_concentracion  AS concentracion,
+          m.med_unidad         AS presentacion,
+          p.PRO_NOMBRE         AS laboratorio
         FROM dbo.fa_medicamento m
-        WHERE m.MED_CODIFICACION = %s
+        LEFT JOIN dbo.fa_proveedor p ON p.Emp_Codigo = m.emp_codigo
+        WHERE     m.MED_COMERCIAL LIKE %s
+            OR    m.MED_GENERICO  LIKE %s
+        ORDER BY LEN(m.MED_COMERCIAL), m.MED_COMERCIAL
     """
-    rows = query_bdfarmacia(sql, [q])
+    rows = query_bdfarmacia(sql, [f"%{q}%", f"%{q}%"])
     return rows[0] if rows else None
 
 
-def _kardex_consulta(med_codigo: int, almacen: int, f_desde: date, f_hasta: date):
+# -------- Consulta Kardex (SIN almacén) ----------
+def _kardex_consulta_sin_almacen(med_codigo: int, f_desde: date, f_hasta: date):
     """
-    Devuelve (encabezado, movimientos) para el Anexo 15.
-    Rango inclusivo: [f_desde, f_hasta]
+    Devuelve:
+      encabezado(dict), movimientos(list[dict]), saldo_inicial, sum_ingresos, sum_egresos, saldo_final
+    Rango inclusivo [f_desde, f_hasta], orden por fecha ascendente.
+    CLA_CODIGO: 1 = Entrada, 2 = Salida.
     """
     # Encabezado
     sql_hdr = """
@@ -240,9 +200,11 @@ def _kardex_consulta(med_codigo: int, almacen: int, f_desde: date, f_hasta: date
     enc = query_bdfarmacia(sql_hdr, [med_codigo])
     encabezado = enc[0] if enc else None
 
-    # Detalle con saldo anterior + acumulado
+    # Fin de día inclusivo
     hasta_plus = (datetime.combine(f_hasta, datetime.min.time()) + timedelta(days=1)).date()
-    sql_det = """
+
+    # Movimientos (raw) + qty_signed
+    sql = """
     WITH mov_raw AS (
       SELECT
           n.NOT_FECHA_MOV, n.NOT_CODIGO, n.NOT_SEC_CLASE, n.CLA_CODIGO,
@@ -250,16 +212,8 @@ def _kardex_consulta(med_codigo: int, almacen: int, f_desde: date, f_hasta: date
           m.MOV_CODIGO, m.MED_CODIGO, m.MOV_CANTIDAD
       FROM dbo.fa_nota n
       JOIN dbo.fa_movimiento m ON m.NOT_CODIGO = n.NOT_CODIGO
-      WHERE n.ALM_CODIGO = %s
-        AND m.MED_CODIGO = %s
+      WHERE m.MED_CODIGO = %s
         AND n.NOT_ESTADO = 'V'
-    ),
-    saldo_anterior AS (
-      SELECT ISNULL(SUM(CASE WHEN r.CLA_CODIGO=1 THEN r.MOV_CANTIDAD
-                             WHEN r.CLA_CODIGO=2 THEN -r.MOV_CANTIDAD
-                             ELSE 0 END),0) AS saldo_ant
-      FROM mov_raw r
-      WHERE r.NOT_FECHA_MOV < %s
     ),
     rango AS (
       SELECT *
@@ -274,54 +228,92 @@ def _kardex_consulta(med_codigo: int, almacen: int, f_desde: date, f_hasta: date
       FROM rango r
     )
     SELECT
-      CONVERT(date, q.NOT_FECHA_MOV) AS fecha,
+      CONVERT(VARCHAR(10), q.NOT_FECHA_MOV, 103) AS fecha,        -- dd/mm/aaaa
       CASE WHEN q.qty_signed>0 THEN q.qty_signed ELSE 0 END AS cantidad_ingreso,
-      CASE WHEN q.qty_signed<0 THEN -q.qty_signed ELSE 0 END AS cantidad_egreso,
-      (SELECT saldo_ant FROM saldo_anterior) AS saldo_anterior,
-      (SELECT saldo_ant FROM saldo_anterior)
-        + SUM(q.qty_signed) OVER (ORDER BY q.NOT_FECHA_MOV, q.NOT_CODIGO
-                                  ROWS UNBOUNDED PRECEDING) AS saldo_actual,
-      q.NOT_SEC_CLASE AS no_receta,
       NULL AS nombre_paciente,
       NULL AS nombre_medico,
-      NULL AS observaciones
+      q.NOT_SEC_CLASE AS no_receta,
+      CASE WHEN q.qty_signed<0 THEN -q.qty_signed ELSE 0 END AS cantidad_egreso,
+      q.NOT_FECHA_MOV AS __orden_fecha,
+      q.NOT_CODIGO    AS __orden_nota,
+      q.NOT_SEC_CLASE AS __orden_sec
     FROM qty q
-    ORDER BY q.NOT_FECHA_MOV, q.NOT_CODIGO
+    ORDER BY q.NOT_FECHA_MOV, q.NOT_CODIGO, q.NOT_SEC_CLASE
     """
-    rows = query_bdfarmacia(sql_det, [almacen, med_codigo, f_desde, f_desde, hasta_plus])
-    return encabezado, rows
+    rows = query_bdfarmacia(sql, [med_codigo, f_desde, hasta_plus])
+
+    # Saldo inicial previo al rango
+    sql_ini = """
+        SELECT ISNULL(SUM(
+            CASE WHEN r.CLA_CODIGO=1 THEN r.MOV_CANTIDAD
+                 WHEN r.CLA_CODIGO=2 THEN -r.MOV_CANTIDAD
+                 ELSE 0 END
+        ),0) AS s
+        FROM (
+            SELECT n.CLA_CODIGO, m.MOV_CANTIDAD, n.NOT_FECHA_MOV
+            FROM dbo.fa_nota n
+            JOIN dbo.fa_movimiento m ON n.NOT_CODIGO=m.NOT_CODIGO
+            WHERE m.MED_CODIGO=%s AND n.NOT_ESTADO='V'
+        ) r
+        WHERE r.NOT_FECHA_MOV < %s;
+    """
+    tmp = query_bdfarmacia(sql_ini, [med_codigo, f_desde])
+    saldo_inicial = (tmp[0]["s"] if tmp else 0) or 0
+
+    # Recálculo de saldos y totales en Python
+    running = float(saldo_inicial)
+    sum_ing = 0.0
+    sum_egr = 0.0
+    out = []
+    for r in rows:
+        ingreso = float(r["cantidad_ingreso"] or 0)
+        egreso  = float(r["cantidad_egreso"] or 0)
+        saldo_anterior = running
+        running = running + ingreso - egreso
+        r["saldo_anterior"] = saldo_anterior
+        r["saldo_actual"] = running
+        # quitar columnas internas de orden
+        r.pop("__orden_fecha", None)
+        r.pop("__orden_nota", None)
+        r.pop("__orden_sec", None)
+        sum_ing += ingreso
+        sum_egr += egreso
+        out.append(r)
+
+    saldo_final = running
+    return encabezado, out, saldo_inicial, sum_ing, sum_egr, saldo_final
 
 
 def movimientos_kardex(request):
     """
-    Form principal:
-      - q: NOMBRE del medicamento (también acepta código/codificación).
-      - desde / hasta: obligatorio (YYYY-MM-DD).
-      - almacen: por defecto 31.
-    Auto-llena el encabezado con los datos del medicamento resuelto.
-    Soporta ?print=1 para vista de impresión.
+    Formulario: medicamento (obligatorio), desde (obligatorio), hasta (obligatorio).
+    SIN almacén. Modal para elegir medicamento (en el template).
     """
     q = (request.GET.get("q") or "").strip()
-    almacen = (request.GET.get("almacen") or "31").strip()
     desde = (request.GET.get("desde") or "").strip()
     hasta = (request.GET.get("hasta") or "").strip()
-    want_print = (request.GET.get("print") or "") == "1"
 
     ctx = {
-        "q": q, "almacen": almacen, "desde": desde, "hasta": hasta,
-        "encabezado": None, "rows": [], "error": "",
-        "print_mode": want_print,
+        "q": q,
+        "desde": desde,
+        "hasta": hasta,
+        "encabezado": None,
+        "rows": [],
+        "error": "",
+        "saldo_inicial": 0,
+        "sum_ingresos": 0,
+        "sum_egresos": 0,
+        "saldo_final": 0,
+        "total_movs": 0,
     }
 
-    # Si solo se abre la pantalla, no buscar todavía
-    if not (q and desde and hasta):
+    # Pantalla vacía si no hay búsqueda
+    if not (q or desde or hasta):
         return render(request, "movimientos/kardex.html", ctx)
 
-    # Validaciones
-    try:
-        alm_int = int(almacen)
-    except ValueError:
-        ctx["error"] = "El almacén debe ser numérico."
+    # Validaciones UX
+    if len(q) < 3:
+        ctx["error"] = "Escribe al menos 3 letras del nombre del medicamento."
         return render(request, "movimientos/kardex.html", ctx)
 
     try:
@@ -332,60 +324,27 @@ def movimientos_kardex(request):
         return render(request, "movimientos/kardex.html", ctx)
 
     if d_hasta < d_desde:
-        ctx["error"] = "La fecha 'Hasta' no puede ser menor que 'Desde'."
+        ctx["error"] = "La fecha hasta debe ser mayor o igual a la fecha desde."
         return render(request, "movimientos/kardex.html", ctx)
 
-    # Resolver medicamento (prioriza NOMBRE)
-    med = _resolve_med_from_name_or_code(q)
+    # Resolver medicamento
+    med = _resolve_med_by_name_or_code(q)
     if not med:
-        ctx["error"] = "No se encontró el medicamento. Escribe parte del NOMBRE (o código/codificación)."
+        ctx["error"] = "No se encontró un medicamento con ese nombre."
         return render(request, "movimientos/kardex.html", ctx)
 
-    enc, rows = _kardex_consulta(med["med_codigo"], alm_int, d_desde, d_hasta)
+    enc, rows, s_ini, t_in, t_eg, s_fin = _kardex_consulta_sin_almacen(
+        med["med_codigo"], d_desde, d_hasta
+    )
 
-    # Actualiza q con “bonito” (para que se vea y sirva al imprimir)
-    q_pretty = f"{med['nombre']}"
-    ctx.update({"encabezado": enc, "rows": rows, "q": q_pretty})
-
-    # Si viene print=1 se puede usar el mismo template (CSS @media print lo deja limpio)
+    ctx.update({
+        "q": med["nombre"],        # mostrar el nombre “bonito”
+        "encabezado": enc,
+        "rows": rows,
+        "saldo_inicial": s_ini,
+        "sum_ingresos": t_in,
+        "sum_egresos": t_eg,
+        "saldo_final": s_fin,
+        "total_movs": len(rows),
+    })
     return render(request, "movimientos/kardex.html", ctx)
-
-def meds_suggest(request):
-    """
-    Devuelve hasta 20 medicamentos que coincidan con el texto buscado.
-    Formato: {"results": [{"id": 355, "label": "355 / N0501 / ALPRAZOLAM"}, ...]}
-    """
-    q = (request.GET.get("q") or "").strip()
-    if not q:
-        return JsonResponse({"results": []})
-
-    # Armamos búsqueda por nombre, codificación y código exacto.
-    # Usamos parámetros con %s para evitar el formato con % () que te daba error.
-    sql = """
-        SELECT TOP (20)
-            m.MED_CODIGO       AS med_codigo,
-            m.MED_CODIFICACION AS codificacion,
-            m.MED_COMERCIAL    AS nombre
-        FROM dbo.fa_medicamento m
-        WHERE
-              m.MED_COMERCIAL    LIKE CONCAT('%', %s, '%')
-           OR m.MED_CODIFICACION LIKE CONCAT('%', %s, '%')
-           OR CAST(m.MED_CODIGO AS varchar(20)) = %s
-        ORDER BY
-            CASE
-              WHEN m.MED_COMERCIAL LIKE CONCAT(%s, '%') THEN 0
-              ELSE 1
-            END,
-            m.MED_COMERCIAL
-    """
-    params = [q, q, q, q]
-    rows = query_bdfarmacia(sql, params)
-
-    results = [
-        {
-            "id": r["med_codigo"],
-            "label": f'{r["med_codigo"]} / {r["codificacion"]} / {r["nombre"]}'
-        }
-        for r in rows
-    ]
-    return JsonResponse({"results": results})

@@ -5,23 +5,16 @@
 
 <style>
   .print-only { display: none; }
-
   @media print {
     body * { visibility: hidden; }
     .print-area, .print-area * { visibility: visible; }
-    .print-area {
-      position: absolute;
-      left: 0; top: 0;
-      width: 100%;
-      margin: 0; padding: 0;
-    }
-    .app-header, .app-footer, .kardex-form, .btn, .nav { display: none !important; }
-
+    .print-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 0; }
+    .app-header, .app-footer, .kardex-form, .btn, .nav, .modal { display: none !important; }
     .print-only { display: block !important; }
-
     .table { border-collapse: collapse !important; }
     .table th, .table td { border: 1px solid #ccc !important; padding: 6px !important; }
   }
+  .text-end { text-align: end; }
 </style>
 
 <h2 class="mb-3">Kardex</h2>
@@ -29,36 +22,28 @@
 <form method="get" class="row g-3 align-items-end kardex-form">
   <div class="col-md-6">
     <label class="form-label">Nombre del medicamento</label>
-
-    <!-- Campo con autocompletado -->
-    <div class="position-relative" id="ac-wrapper">
-      <input type="text" name="q" id="input-medicamento"
-             class="form-control"
-             placeholder="Escribe el nombre..."
-             autocomplete="off"
+    <div class="input-group">
+      <input type="text" name="q" id="input-medicamento" class="form-control"
+             placeholder="Escribe el nombre..." autocomplete="off"
              value="{{ q|default:'' }}">
-      <div id="ac-list"
-           class="list-group shadow-sm"
-           style="position:absolute; z-index:1000; width:100%; display:none; max-height:260px; overflow:auto;">
-      </div>
+      <button type="button" class="btn btn-outline-secondary" id="btnElegirMed">
+        <i class="bi bi-search"></i>
+      </button>
     </div>
+    <div class="form-text">Escribe al menos 3 letras o usa el botón para la lista.</div>
   </div>
 
-  <div class="col-md-2">
-    <label class="form-label">Almacén</label>
-    <input type="number" name="almacen" class="form-control" value="{{ almacen|default:'31' }}">
-  </div>
-  <div class="col-md-2">
+  <div class="col-md-3">
     <label class="form-label">Desde</label>
     <input type="date" name="desde" class="form-control" value="{{ desde|default:'' }}">
   </div>
-  <div class="col-md-2">
+  <div class="col-md-3">
     <label class="form-label">Hasta</label>
     <input type="date" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
   </div>
 
   <div class="col-12 d-flex gap-2">
-    <button class="btn btn-success">
+    <button class="btn btn-success" id="btnBuscar">
       <i class="bi bi-search me-1"></i> Buscar
     </button>
 
@@ -70,96 +55,55 @@
   </div>
 </form>
 
-{# --- Autocomplete --- #}
-<script>
-(function() {
-  const $input = document.getElementById('input-medicamento');
-  const $list  = document.getElementById('ac-list');
-  let lastQuery = '';
-  let controller = null;
-
-  function hideList() { $list.style.display = 'none'; }
-  function showList() { $list.style.display = 'block'; }
-
-  function render(items) {
-    if (!items.length) { hideList(); return; }
-    $list.innerHTML = '';
-    items.forEach(it => {
-      const a = document.createElement('a');
-      a.href = '#';
-      a.className = 'list-group-item list-group-item-action';
-      a.textContent = it.label;
-      a.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        $input.value = it.label;  // usamos la etiqueta completa
-        hideList();
-      });
-      $list.appendChild(a);
-    });
-    showList();
-  }
-
-  async function fetchSug(q) {
-    if (controller) controller.abort();
-    controller = new AbortController();
-    const url = "{% url 'meds_suggest' %}?q=" + encodeURIComponent(q);  // <---- SIN namespace
-    try {
-      const res = await fetch(url, {signal: controller.signal});
-      if (!res.ok) return render([]);
-      const data = await res.json();
-      render(data.results || []);
-    } catch(e) {
-      render([]);
-    }
-  }
-
-  let debounce;
-  $input.addEventListener('input', () => {
-    const q = $input.value.trim();
-    if (q === lastQuery) return;
-    lastQuery = q;
-    clearTimeout(debounce);
-    if (q.length < 2) { hideList(); return; }
-    debounce = setTimeout(() => fetchSug(q), 180);
-  });
-
-  document.addEventListener('click', (e) => {
-    if (!document.getElementById('ac-wrapper').contains(e.target)) hideList();
-  });
-
-  $input.addEventListener('focus', () => {
-    if (($list.innerHTML || '').trim().length) showList();
-  });
-})();
-</script>
-
 {% if error %}
   <div class="alert alert-warning mt-3">{{ error }}</div>
 {% endif %}
 
 {% if encabezado %}
-  <hr class="mt-4">
-
-  <!-- SOLO esto se imprime -->
-  <div class="print-area">
+  <div class="print-area mt-3">
     <div class="print-only mb-3">
-      <h2 class="mb-0">Anexo 15 – Kardex de Psicotrópicos</h2>
-      {% if desde and hasta %}
-        <small>Rango: {{ desde }} a {{ hasta }} &middot; Almacén: {{ almacen }}</small>
-      {% endif %}
+      <h2 class="mb-1">KARDEX</h2>
+      <div class="small">
+        Rango consultado: {{ desde }} – {{ hasta }} &nbsp;•&nbsp; Total de movimientos: {{ total_movs }}
+      </div>
       <hr>
     </div>
 
-    <div class="row">
-      <div class="col-md-6">
-        <p><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
-        <p><strong>DCI:</strong> {{ encabezado.dci }}</p>
-        <p><strong>Laboratorio:</strong> {{ encabezado.laboratorio }}</p>
+    <!-- Encabezado del reporte -->
+    <div class="row gy-2">
+      <div class="col-md-8"><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</div>
+      <div class="col-md-4"><strong>Concentración:</strong> {{ encabezado.concentracion }}</div>
+      <div class="col-md-8"><strong>Denominación común internacional (DCI):</strong> {{ encabezado.dci }}</div>
+      <div class="col-md-4"><strong>Presentación:</strong> {{ encabezado.presentacion }}</div>
+      <div class="col-md-8"><strong>Laboratorio:</strong> {{ encabezado.laboratorio }}</div>
+      <div class="col-md-4"><strong>Origen:</strong></div>
+    </div>
+
+    <!-- Resumen -->
+    <div class="row g-3 mt-3">
+      <div class="col-md-3">
+        <div class="card p-2">
+          <div class="small text-muted">Saldo inicial</div>
+          <div class="fs-5 text-end">{{ saldo_inicial|default:"0"|floatformat:"2" }}</div>
+        </div>
       </div>
-      <div class="col-md-6">
-        <p><strong>Concentración:</strong> {{ encabezado.concentracion }}</p>
-        <p><strong>Presentación:</strong> {{ encabezado.presentacion }}</p>
-        <p><strong>Código / Codificación:</strong> {{ encabezado.med_codigo }} / {{ encabezado.codificacion }}</p>
+      <div class="col-md-3">
+        <div class="card p-2">
+          <div class="small text-muted">Total ingresos</div>
+          <div class="fs-5 text-end">{{ sum_ingresos|default:"0"|floatformat:"2" }}</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card p-2">
+          <div class="small text-muted">Total egresos</div>
+          <div class="fs-5 text-end">{{ sum_egresos|default:"0"|floatformat:"2" }}</div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card p-2">
+          <div class="small text-muted">Saldo final</div>
+          <div class="fs-5 text-end">{{ saldo_final|default:"0"|floatformat:"2" }}</div>
+        </div>
       </div>
     </div>
 
@@ -169,13 +113,13 @@
           <thead class="table-light">
             <tr>
               <th>Fecha</th>
-              <th>Cant. ingreso</th>
-              <th>Nombre paciente</th>
-              <th>Nombre médico</th>
-              <th>Nº receta</th>
-              <th>Cant. egreso</th>
-              <th>Saldo anterior</th>
-              <th>Saldo actual</th>
+              <th class="text-end">Cantidad Ingreso</th>
+              <th>Nombre Paciente</th>
+              <th>Nombre Médico</th>
+              <th>No Receta</th>
+              <th class="text-end">Cantidad Egreso</th>
+              <th class="text-end">Saldo Anterior</th>
+              <th class="text-end">Saldo Actual</th>
               <th>Observaciones</th>
             </tr>
           </thead>
@@ -183,35 +127,147 @@
             {% for r in rows %}
               <tr>
                 <td>{{ r.fecha }}</td>
-                <td class="text-end">{{ r.cantidad_ingreso }}</td>
+                <td class="text-end">{{ r.cantidad_ingreso|default:""|floatformat:"2" }}</td>
                 <td>{{ r.nombre_paciente }}</td>
                 <td>{{ r.nombre_medico }}</td>
                 <td>{{ r.no_receta }}</td>
-                <td class="text-end">{{ r.cantidad_egreso }}</td>
-                <td class="text-end">{{ r.saldo_anterior }}</td>
-                <td class="text-end">{{ r.saldo_actual }}</td>
+                <td class="text-end">{{ r.cantidad_egreso|default:""|floatformat:"2" }}</td>
+                <td class="text-end">{{ r.saldo_anterior|default:""|floatformat:"2" }}</td>
+                <td class="text-end">{{ r.saldo_actual|default:""|floatformat:"2" }}</td>
                 <td>{{ r.observaciones }}</td>
               </tr>
             {% endfor %}
           </tbody>
+          <tfoot>
+            <tr class="fw-semibold">
+              <td class="text-end">Totales:</td>
+              <td class="text-end">{{ sum_ingresos|default:"0"|floatformat:"2" }}</td>
+              <td colspan="3"></td>
+              <td class="text-end">{{ sum_egresos|default:"0"|floatformat:"2" }}</td>
+              <td class="text-end">{{ saldo_inicial|default:"0"|floatformat:"2" }}</td>
+              <td class="text-end">{{ saldo_final|default:"0"|floatformat:"2" }}</td>
+              <td></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     {% else %}
-      <div class="alert alert-info mt-3">Sin movimientos en el rango seleccionado.</div>
+      <div class="alert alert-info mt-3">No se encontraron movimientos para el rango indicado.</div>
     {% endif %}
   </div>
 {% endif %}
 
+<!-- Modal de selección (usa tu endpoint meds_suggest) -->
+<div class="modal fade" id="modalMeds" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Seleccionar medicamento</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group mb-3">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input id="medSearch" type="text" class="form-control" placeholder="Buscar por nombre o código…">
+        </div>
+        <div id="medResults" class="list-group"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnMedChoose" type="button" class="btn btn-success" disabled>Elegir</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
+(function () {
+  // imprimir
   document.addEventListener('DOMContentLoaded', function () {
     var btn = document.getElementById('btnPrint');
-    if (btn) {
-      btn.addEventListener('click', function (ev) {
+    if (btn) btn.addEventListener('click', function (ev) { ev.preventDefault(); window.print(); });
+  });
+
+  // Modal selector
+  const $input = document.getElementById('input-medicamento');
+  const $btnElegir = document.getElementById('btnElegirMed');
+  const $modalEl = document.getElementById('modalMeds');
+  const $search = document.getElementById('medSearch');
+  const $list = document.getElementById('medResults');
+  const $btnChoose = document.getElementById('btnMedChoose');
+  let selectedValue = null;
+  let bsModal;
+
+  function openModal(prefill) {
+    if (!bsModal) bsModal = new bootstrap.Modal($modalEl);
+    $search.value = prefill || '';
+    $list.innerHTML = '';
+    selectedValue = null;
+    $btnChoose.disabled = true;
+    bsModal.show();
+    if ($search.value.trim().length) fetchList($search.value.trim());
+    setTimeout(() => $search.focus(), 250);
+  }
+
+  async function fetchList(q) {
+    const url = "{% url 'meds_suggest' %}?q=" + encodeURIComponent(q);
+    $list.innerHTML = '<div class="list-group-item">Buscando…</div>';
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      renderList(data.results || []);
+    } catch (e) {
+      $list.innerHTML = '<div class="list-group-item text-danger">Error al buscar</div>';
+    }
+  }
+
+  function renderList(items) {
+    if (!items.length) { $list.innerHTML = '<div class="list-group-item">Sin resultados</div>'; return; }
+    $list.innerHTML = '';
+    items.forEach(it => {
+      const a = document.createElement('a');
+      a.href = '#';
+      a.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+      a.innerHTML = `<span>${it.label}</span><i class="bi bi-check2-circle d-none"></i>`;
+      a.addEventListener('click', (ev) => {
         ev.preventDefault();
-        window.print();
+        [...$list.children].forEach(el => el.querySelector('i').classList.add('d-none'));
+        a.querySelector('i').classList.remove('d-none');
+        selectedValue = it.label;
+        $btnChoose.disabled = false;
       });
+      $list.appendChild(a);
+    });
+  }
+
+  $btnElegir.addEventListener('click', (e) => { e.preventDefault(); openModal($input.value.trim()); });
+
+  $input.addEventListener('focus', () => {
+    if ($input.value.trim().length < 3) openModal('');
+  });
+
+  let debounce;
+  $search.addEventListener('input', () => {
+    clearTimeout(debounce);
+    const q = $search.value.trim();
+    debounce = setTimeout(() => fetchList(q), 200);
+  });
+
+  $btnChoose.addEventListener('click', () => {
+    if (!selectedValue) return;
+    $input.value = selectedValue;
+    bsModal.hide();
+  });
+
+  // UX mínima al enviar
+  document.getElementById('btnBuscar').addEventListener('click', (e) => {
+    const q = $input.value.trim();
+    if (q.length < 3) {
+      e.preventDefault();
+      openModal(q);
     }
   });
+})();
 </script>
 
 {% endblock %}
