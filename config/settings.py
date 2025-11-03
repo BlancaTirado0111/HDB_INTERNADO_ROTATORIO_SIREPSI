@@ -108,3 +108,11 @@ LOGGING = {
         "django.db.backends": {"handlers": ["console"], "level": "ERROR"},  # cambia a DEBUG si necesitas ver SQL
     },
 }
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": BASE_DIR / "django_cache",
+        "TIMEOUT": 300,  # 5 minutos
+    }
+}
+

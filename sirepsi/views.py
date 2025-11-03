@@ -6,6 +6,7 @@ import csv
 from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse
 from django.shortcuts import render
+from django.core.cache import cache  # para cachear consultas pesadas
 
 # XLSX opcional con openpyxl (si no está, igual funciona el CSV)
 try:
@@ -20,7 +21,7 @@ from .dbutils import (
     query_bdfarmacia,
     kardex_encabezado,
     kardex_detalle,
-    prescripciones_detalle,   # <-- asegúrate de tener esta función en dbutils.py
+    prescripciones_detalle,   # asegúrate de tener esta función en dbutils.py
 )
 
 # ===================== HOME / UTILES =====================
@@ -240,14 +241,22 @@ def movimientos_kardex(request):
         ctx["error"] = "No se encontró un medicamento con ese nombre."
         return render(request, "movimientos/kardex.html", ctx)
 
-    # Encabezado + detalle (con Paciente y Médico)
-    enc = kardex_encabezado(med["med_codigo"])
-    rows = kardex_detalle(
-        med_codigo=med["med_codigo"],
-        almacen=DEFAULT_ALMACEN,
-        fecha_desde=d_desde,
-        fecha_hasta=d_hasta
-    )
+    # ------- CACHÉ (5 minutos) para reducir latencia en consultas repetidas -------
+    cache_key = f"kardex:{DEFAULT_ALMACEN}:{med['med_codigo']}:{d_desde.isoformat()}:{d_hasta.isoformat()}"
+    data = cache.get(cache_key)
+    if data is None:
+        enc = kardex_encabezado(med["med_codigo"])
+        rows = kardex_detalle(
+            med_codigo=med["med_codigo"],
+            almacen=DEFAULT_ALMACEN,
+            fecha_desde=d_desde,
+            fecha_hasta=d_hasta
+        )
+        data = (enc, rows)
+        cache.set(cache_key, data, 300)  # 300s = 5 min
+    else:
+        enc, rows = data
+    # ------------------------------------------------------------------------------
 
     # Totales
     sum_ing = sum(float(r.get("cantidad_ingreso") or 0) for r in rows)
