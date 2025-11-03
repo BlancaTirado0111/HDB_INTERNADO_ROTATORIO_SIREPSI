@@ -1,0 +1,151 @@
+ {% extends "base.html" %}
+{% block title %}Prescripciones{% endblock %}
+
+{% block content %}
+
+<h2 class="mb-3">Prescripciones</h2>
+
+<form method="get" class="row g-3 align-items-end position-relative">
+  <div class="col-md-6">
+    <label class="form-label">Nombre del medicamento</label>
+    <div class="input-group" id="ac-wrapper">
+      <input type="text" name="q" id="input-medicamento"
+             class="form-control"
+             placeholder="Escribe al menos 3 letras o abre la lista…"
+             autocomplete="off"
+             value="{{ q|default:'' }}">
+      <button type="button" class="btn btn-outline-secondary" id="btn-open-list">
+        <i class="bi bi-search"></i>
+      </button>
+    </div>
+    <div id="ac-list"
+         class="list-group shadow-sm"
+         style="position:absolute; z-index:1000; width:100%; display:none; max-height:260px; overflow:auto;">
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <label class="form-label">Desde</label>
+    <input type="date" name="desde" class="form-control" value="{{ desde|default:'' }}">
+  </div>
+
+  <div class="col-md-3">
+    <label class="form-label">Hasta</label>
+    <input type="date" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
+  </div>
+
+  <div class="col-12 d-flex gap-2">
+    <button class="btn btn-success">
+      <i class="bi bi-search me-1"></i> Buscar
+    </button>
+  </div>
+</form>
+
+<script>
+(function() {
+  const $input = document.getElementById('input-medicamento');
+  const $list  = document.getElementById('ac-list');
+  let lastQuery = '';
+  let controller = null;
+
+  function hideList() { $list.style.display = 'none'; }
+  function showList() { $list.style.display = 'block'; }
+
+  function render(items) {
+    if (!items.length) { hideList(); return; }
+    $list.innerHTML = '';
+    items.forEach(it => {
+      const a = document.createElement('a');
+      a.href = '#';
+      a.className = 'list-group-item list-group-item-action';
+      a.textContent = it.label;
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        $input.value = it.label.replace(/^([A-Z0-9]+)\s+—\s+/i, '');
+        hideList();
+      });
+      $list.appendChild(a);
+    });
+    showList();
+  }
+
+  async function fetchSug(q) {
+    if (controller) controller.abort();
+    controller = new AbortController();
+    const url = "{% url 'meds_suggest' %}?q=" + encodeURIComponent(q);
+    try {
+      const res = await fetch(url, {signal: controller.signal});
+      if (!res.ok) return render([]);
+      const data = await res.json();
+      render(data.results || []);
+    } catch(e) {
+      render([]);
+    }
+  }
+
+  let debounce;
+  $input.addEventListener('input', () => {
+    const q = $input.value.trim();
+    if (q === lastQuery) return;
+    lastQuery = q;
+    clearTimeout(debounce);
+    if (q.length < 3) { hideList(); return; }
+    debounce = setTimeout(() => fetchSug(q), 180);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('ac-wrapper').contains(e.target)) hideList();
+  });
+
+  $input.addEventListener('focus', () => {
+    if (($list.innerHTML || '').trim().length) showList();
+  });
+})();
+</script>
+
+{% if error %}
+  <div class="alert alert-warning mt-3">{{ error }}</div>
+{% endif %}
+
+{% if encabezado %}
+  <div class="row mt-3">
+    <div class="col-md-6">
+      <p><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
+      <p><strong>DCI:</strong> {{ encabezado.dci }}</p>
+      <p><strong>Laboratorio:</strong> {{ encabezado.laboratorio }}</p>
+    </div>
+    <div class="col-md-6">
+      <p><strong>Concentración:</strong> {{ encabezado.concentracion }}</p>
+      <p><strong>Presentación:</strong> {{ encabezado.presentacion }}</p>
+    </div>
+  </div>
+
+  {% if rows %}
+    <div class="table-responsive mt-3">
+      <table class="table table-sm align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Fecha</th>
+            <th>Nombre Paciente</th>
+            <th>Nombre Médico</th>
+            <th>No Receta</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              <td>{{ r.fecha }}</td>
+              <td>{{ r.nombre_paciente }}</td>
+              <td>{{ r.nombre_medico }}</td>
+              <td>{{ r.no_receta }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="alert alert-info mt-3">No se encontraron prescripciones para el rango indicado.</div>
+  {% endif %}
+{% endif %}
+
+{% endblock %}

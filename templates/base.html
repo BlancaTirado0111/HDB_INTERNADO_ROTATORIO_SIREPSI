@@ -30,7 +30,7 @@
             <a class="nav-link p-0 me-3 {% if current == 'medicamentos' %}active{% endif %}" href="{% url 'medicamentos' %}">Medicamentos</a>
             <!-- antes tenía #, ahora apunta a 'movimientos' -->
             <a class="nav-link p-0 me-3 {% if current == 'movimientos' %}active{% endif %}" href="{% url 'movimientos' %}">Movimientos</a>
-            <a class="nav-link p-0 {% if current == 'prescripciones' %}active{% endif %}" href="#">Prescripciones</a>
+            <a class="nav-link p-0 {% if current == 'prescripciones' %}active{% endif %}" href="{% url 'prescripciones' %}">Prescripciones</a>
           {% endwith %}
       </nav>
 
