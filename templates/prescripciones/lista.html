@@ -1,67 +1,99 @@
- {% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Prescripciones{% endblock %}
 
 {% block content %}
 
 <h2 class="mb-3">Prescripciones</h2>
 
-<form method="get" class="row g-3 align-items-end position-relative">
+{# ======== Formulario de búsqueda ======== #}
+<form method="get" class="row g-3 align-items-end position-relative" aria-label="Formulario de búsqueda de prescripciones">
   <div class="col-md-6">
-    <label class="form-label">Nombre del medicamento</label>
+    <label class="form-label" for="input-medicamento">Nombre del medicamento</label>
     <div class="input-group" id="ac-wrapper">
-      <input type="text" name="q" id="input-medicamento"
-             class="form-control"
-             placeholder="Escribe al menos 3 letras o abre la lista…"
-             autocomplete="off"
-             value="{{ q|default:'' }}">
-      <button type="button" class="btn btn-outline-secondary" id="btn-open-list">
-        <i class="bi bi-search"></i>
+      <input
+        type="text"
+        name="q"
+        id="input-medicamento"
+        class="form-control"
+        placeholder="Escribe al menos 3 letras o abre la lista…"
+        autocomplete="off"
+        aria-autocomplete="list"
+        aria-controls="ac-list"
+        aria-expanded="false"
+        value="{{ q|default:'' }}"
+      />
+      <button type="button" class="btn btn-outline-secondary" id="btn-open-list" aria-label="Abrir lista de medicamentos">
+        <i class="bi bi-search" aria-hidden="true"></i>
       </button>
     </div>
-    <div id="ac-list"
-         class="list-group shadow-sm"
-         style="position:absolute; z-index:1000; width:100%; display:none; max-height:260px; overflow:auto;">
-    </div>
+    <div
+      id="ac-list"
+      class="list-group shadow-sm"
+      role="listbox"
+      aria-label="Sugerencias de medicamentos"
+      style="position:absolute; z-index:1000; width:100%; display:none; max-height:260px; overflow:auto;"
+    ></div>
   </div>
 
   <div class="col-md-3">
-    <label class="form-label">Desde</label>
-    <input type="date" name="desde" class="form-control" value="{{ desde|default:'' }}">
+    <label class="form-label" for="fecha-desde">Desde</label>
+    <input type="date" name="desde" id="fecha-desde" class="form-control" value="{{ desde|default:'' }}">
   </div>
 
   <div class="col-md-3">
-    <label class="form-label">Hasta</label>
-    <input type="date" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
+    <label class="form-label" for="fecha-hasta">Hasta</label>
+    <input type="date" name="hasta" id="fecha-hasta" class="form-control" value="{{ hasta|default:'' }}">
   </div>
 
   <div class="col-12 d-flex gap-2">
     <button class="btn btn-success">
-      <i class="bi bi-search me-1"></i> Buscar
+      <i class="bi bi-search me-1" aria-hidden="true"></i> Buscar
     </button>
   </div>
 </form>
 
+{# ======== Autocomplete ligero (misma API que kardex) ======== #}
 <script>
 (function() {
   const $input = document.getElementById('input-medicamento');
   const $list  = document.getElementById('ac-list');
+  const $wrap  = document.getElementById('ac-wrapper');
   let lastQuery = '';
   let controller = null;
+  let debounce;
 
-  function hideList() { $list.style.display = 'none'; }
-  function showList() { $list.style.display = 'block'; }
+  function hideList() {
+    if ($list) {
+      $list.style.display = 'none';
+      $input && $input.setAttribute('aria-expanded', 'false');
+    }
+  }
+  function showList() {
+    if ($list) {
+      $list.style.display = 'block';
+      $input && $input.setAttribute('aria-expanded', 'true');
+    }
+  }
 
   function render(items) {
+    if (!$list) return;
     if (!items.length) { hideList(); return; }
+
     $list.innerHTML = '';
-    items.forEach(it => {
+    items.forEach((it) => {
       const a = document.createElement('a');
       a.href = '#';
       a.className = 'list-group-item list-group-item-action';
+      a.role = 'option';
+      a.setAttribute('aria-selected', 'false');
       a.textContent = it.label;
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
-        $input.value = it.label.replace(/^([A-Z0-9]+)\s+—\s+/i, '');
+        if ($input) {
+          // Si llega "N0501 — Alprazolam", deja solo el nombre
+          $input.value = it.label.replace(/^([A-Z0-9]+)\s+—\s+/i, '');
+          $input.focus();
+        }
         hideList();
       });
       $list.appendChild(a);
@@ -70,43 +102,47 @@
   }
 
   async function fetchSug(q) {
+    if (!$input) return;
     if (controller) controller.abort();
     controller = new AbortController();
     const url = "{% url 'meds_suggest' %}?q=" + encodeURIComponent(q);
     try {
-      const res = await fetch(url, {signal: controller.signal});
+      const res = await fetch(url, { signal: controller.signal });
       if (!res.ok) return render([]);
       const data = await res.json();
-      render(data.results || []);
-    } catch(e) {
+      render((data && data.results) || []);
+    } catch (e) {
       render([]);
     }
   }
 
-  let debounce;
-  $input.addEventListener('input', () => {
-    const q = $input.value.trim();
-    if (q === lastQuery) return;
-    lastQuery = q;
-    clearTimeout(debounce);
-    if (q.length < 3) { hideList(); return; }
-    debounce = setTimeout(() => fetchSug(q), 180);
-  });
+  if ($input) {
+    $input.addEventListener('input', () => {
+      const q = $input.value.trim();
+      if (q === lastQuery) return;
+      lastQuery = q;
+      clearTimeout(debounce);
+      if (q.length < 3) { hideList(); return; }
+      debounce = setTimeout(() => fetchSug(q), 180);
+    });
+
+    $input.addEventListener('focus', () => {
+      if (($list && $list.innerHTML || '').trim().length) showList();
+    });
+  }
 
   document.addEventListener('click', (e) => {
-    if (!document.getElementById('ac-wrapper').contains(e.target)) hideList();
-  });
-
-  $input.addEventListener('focus', () => {
-    if (($list.innerHTML || '').trim().length) showList();
-  });
+    if ($wrap && !$wrap.contains(e.target)) hideList();
+  }, { passive: true });
 })();
 </script>
 
+{# ======== Mensajes de validación ======== #}
 {% if error %}
-  <div class="alert alert-warning mt-3">{{ error }}</div>
+  <div class="alert alert-warning mt-3" role="alert">{{ error }}</div>
 {% endif %}
 
+{# ======== Resultado ======== #}
 {% if encabezado %}
   <div class="row mt-3">
     <div class="col-md-6">
@@ -122,13 +158,13 @@
 
   {% if rows %}
     <div class="table-responsive mt-3">
-      <table class="table table-sm align-middle">
+      <table class="table table-sm align-middle" role="table">
         <thead class="table-light">
           <tr>
-            <th>Fecha</th>
-            <th>Nombre Paciente</th>
-            <th>Nombre Médico</th>
-            <th>No Receta</th>
+            <th scope="col">Fecha</th>
+            <th scope="col">Nombre Paciente</th>
+            <th scope="col">Nombre Médico</th>
+            <th scope="col">No Receta</th>
           </tr>
         </thead>
         <tbody>
@@ -144,7 +180,7 @@
       </table>
     </div>
   {% else %}
-    <div class="alert alert-info mt-3">No se encontraron prescripciones para el rango indicado.</div>
+    <div class="alert alert-info mt-3" role="status">No se encontraron prescripciones para el rango indicado.</div>
   {% endif %}
 {% endif %}
 

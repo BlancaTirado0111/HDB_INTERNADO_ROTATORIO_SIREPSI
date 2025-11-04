@@ -2,53 +2,48 @@
 {% block title %}Inicio • SIREPSI{% endblock %}
 
 {% block content %}
+  <!-- HERO con degradado naranja→verde -->
+  <section class="hero-sirepsi">
+    <div class="container">
+      <h1 class="display-6">
+        Sistema de reportes para medicamentos psicotrópicos controlados <strong>SIREPSI</strong>
+      </h1>
+      <p>Visualizaciones, consultas y reportes sobre los medicamentos psicotrópicos controlados</p>
+    </div>
+  </section>
 
-<!-- HERO con degradado naranja→verde -->
-<section class="hero-sirepsi">
-  <div class="container">
-    <h1 class="display-6">
-      Sistema de reportes para medicamentos psicotrópicos controlados <strong>SIREPSI</strong>
-    </h1>
-    <p>Visualizaciones, consultas y reportes sobre los medicamentos psicotrópicos controlados</p>
-  </div>
-</section>
+  <!-- Tarjetas de acceso rápido -->
+  <section class="features" aria-label="Accesos rápidos">
+    <div class="card-grid">
+      <!-- Medicamentos -->
+      <article class="card">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <i class="bi bi-capsule fs-3 text-success" aria-hidden="true"></i>
+          <h3 class="h4 m-0">Medicamentos</h3>
+        </div>
+        <p class="text-secondary mb-3">Catálogo de medicamentos controlados.</p>
+        <a href="{% url 'medicamentos' %}" class="btn-sirepsi">Ver lista</a>
+      </article>
 
-<!-- Tarjetas de acceso rápido -->
-<section class="features">
-  <div class="card-grid">
-    <!-- Medicamentos -->
-    <article class="card">
-      <div class="d-flex align-items-center gap-2 mb-2">
-        <i class="bi bi-capsule fs-3 text-success"></i>
-        <h3 class="h4 m-0">Medicamentos</h3>
-      </div>
-      <p class="text-secondary mb-3">Catálogo de medicamentos controlados.</p>
-      <a href="{% url 'medicamentos' %}" class="btn-sirepsi">
-        Ver lista
-      </a>
-    </article>
+      <!-- Movimientos -->
+      <article class="card">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <i class="bi bi-arrow-left-right fs-3 text-success" aria-hidden="true"></i>
+          <h3 class="h4 m-0">Movimientos</h3>
+        </div>
+        <p class="text-secondary mb-3">Ingresos / egresos (kardex).</p>
+        <a href="{% url 'movimientos' %}" class="btn-sirepsi">Ver movimientos</a>
+      </article>
 
-    <!-- Movimientos -->
-    <article class="card">
-      <div class="d-flex align-items-center gap-2 mb-2">
-        <i class="bi bi-arrow-left-right fs-3 text-success"></i>
-        <h3 class="h4 m-0">Movimientos</h3>
-      </div>
-      <p class="text-secondary mb-3">Ingresos / egresos (kardex).</p>
-      <a href="{% url 'movimientos' %}" class="btn-sirepsi">Ver movimientos</a>
-    </article>
-
-    <!-- Prescripciones -->
-    <article class="card">
-      <div class="d-flex align-items-center gap-2 mb-2">
-        <i class="bi bi-person-vcard fs-3 text-success"></i>
-        <h3 class="h4 m-0">Prescripciones</h3>
-      </div>
-      <p class="text-secondary mb-3">Paciente, doctor, fecha, medicamento.</p>
-      <a href="{% url 'prescripciones' %}" class="btn-sirepsi">Ver prescripciones</a>
-      </a>
-    </article>
-  </div>
-</section>
-
+      <!-- Prescripciones -->
+      <article class="card">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <i class="bi bi-person-vcard fs-3 text-success" aria-hidden="true"></i>
+          <h3 class="h4 m-0">Prescripciones</h3>
+        </div>
+        <p class="text-secondary mb-3">Paciente, doctor, fecha, medicamento.</p>
+        <a href="{% url 'prescripciones' %}" class="btn-sirepsi">Ver prescripciones</a>
+      </article>
+    </div>
+  </section>
 {% endblock %}

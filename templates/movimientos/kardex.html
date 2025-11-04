@@ -19,8 +19,10 @@
 
 <h2 class="mb-3">Kardex</h2>
 
-<form method="get" class="row g-3 align-items-end position-relative kardex-form">
-  <div class="col-md-6">
+<form method="get" class="row g-3 gx-4 align-items-end position-relative kardex-form">
+
+  <!-- Nombre del medicamento -->
+  <div class="col-lg-6 col-md-12">
     <label class="form-label">Nombre del medicamento</label>
     <div class="input-group" id="ac-wrapper">
       <input type="text" name="q" id="input-medicamento"
@@ -28,7 +30,6 @@
              placeholder="Escribe al menos 3 letras o abre la lista…"
              autocomplete="off"
              value="{{ q|default:'' }}">
-      <!-- Botón opcional para abrir lista/modal si lo usas -->
       <button type="button" class="btn btn-outline-secondary" id="btn-open-list">
         <i class="bi bi-search"></i>
       </button>
@@ -39,26 +40,29 @@
     </div>
   </div>
 
-  <div class="col-md-3">
+  <!-- Desde -->
+  <div class="col-lg-3 col-md-6">
     <label class="form-label">Desde</label>
     <input type="date" name="desde" class="form-control" value="{{ desde|default:'' }}">
   </div>
 
-  <div class="col-md-3">
+  <!-- Hasta -->
+  <div class="col-lg-3 col-md-6">
     <label class="form-label">Hasta</label>
     <input type="date" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
   </div>
 
-  <div class="col-12 d-flex gap-2">
+  <!-- Botones -->
+  <div class="col-12 d-flex flex-wrap justify-content-center gap-2 mt-2">
     <button class="btn btn-success">
       <i class="bi bi-search me-1"></i> Buscar
     </button>
+
     {% if encabezado %}
       <button id="btnPrint" type="button" class="btn btn-outline-secondary">
         <i class="bi bi-printer me-1"></i> Imprimir
       </button>
 
-      <!-- ⬇️ NUEVOS BOTONES -->
       <a class="btn btn-outline-secondary"
          href="{% url 'kardex_export_csv' %}?q={{ q|urlencode }}&desde={{ desde }}&hasta={{ hasta }}">
         <i class="bi bi-filetype-csv me-1"></i> Exportar CSV (Excel)
@@ -73,7 +77,7 @@
 
 </form>
 
-<!-- Autocomplete ligero (si no usas modal) -->
+<!-- Autocomplete ligero -->
 <script>
 (function() {
   const $input = document.getElementById('input-medicamento');
@@ -94,7 +98,7 @@
       a.textContent = it.label;
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
-        $input.value = it.label.replace(/^([A-Z0-9]+)\s+—\s+/i, ''); // si llega "N0501 — Alprazolam"
+        $input.value = it.label.replace(/^([A-Z0-9]+)\s+—\s+/i, '');
         hideList();
       });
       $list.appendChild(a);
@@ -174,16 +178,15 @@
       </div>
     </div>
 
-   
     {% if rows %}
       <div class="table-responsive mt-3">
         <table class="table table-sm align-middle">
           <thead class="table-light">
             <tr>
               <th>Fecha</th>
-              <th class="text-end">Cantidad Ingreso</th>
               <th>Nombre Paciente</th>
               <th>Nombre Médico</th>
+              <th class="text-end">Cantidad Ingreso</th>
               <th>No Receta</th>
               <th class="text-end">Cantidad Egreso</th>
               <th class="text-end">Saldo Anterior</th>
@@ -195,9 +198,9 @@
             {% for r in rows %}
               <tr>
                 <td>{{ r.fecha }}</td>
-                <td class="text-end">{{ r.cantidad_ingreso|default:""|floatformat:"2" }}</td>
                 <td>{{ r.nombre_paciente }}</td>
                 <td>{{ r.nombre_medico }}</td>
+                <td class="text-end">{{ r.cantidad_ingreso|default:""|floatformat:"2" }}</td>
                 <td>{{ r.no_receta }}</td>
                 <td class="text-end">{{ r.cantidad_egreso|default:""|floatformat:"2" }}</td>
                 <td class="text-end">{{ r.saldo_anterior|default:""|floatformat:"2" }}</td>
@@ -208,9 +211,9 @@
           </tbody>
           <tfoot>
             <tr class="fw-semibold">
-              <td class="text-end">Totales:</td>
+              <td colspan="3" class="text-end">Totales:</td>
               <td class="text-end">{{ sum_ingresos|default:"0"|floatformat:"2" }}</td>
-              <td colspan="3"></td>
+              <td></td>
               <td class="text-end">{{ sum_egresos|default:"0"|floatformat:"2" }}</td>
               <td class="text-end">{{ saldo_inicial|default:"0"|floatformat:"2" }}</td>
               <td class="text-end">{{ saldo_final|default:"0"|floatformat:"2" }}</td>
@@ -220,7 +223,9 @@
         </table>
       </div>
     {% else %}
-      <div class="alert alert-info mt-3">No se encontraron movimientos para el rango indicado.</div>
+      <div class="alert alert-info mt-3">
+        No se encontraron movimientos para el rango indicado.
+      </div>
     {% endif %}
   </div>
 {% endif %}

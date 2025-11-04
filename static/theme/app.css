@@ -7,6 +7,12 @@
   --white:#fff;
   --gray:#f6f6f6;
   --text:#2b2b2b;
+
+  /* tokens suaves para sombras/radios/contornos */
+  --radius:16px;
+  --shadow-sm:0 2px 8px rgba(0,0,0,.05);
+  --shadow-md:0 10px 24px rgba(0,0,0,.08);
+  --focus-ring: 0 0 0 3px rgba(45, 145, 72, .25); /* verde suave */
 }
 
 *{ box-sizing:border-box; }
@@ -21,6 +27,23 @@ html,body{
 
 .container{ width:min(1100px, 92%); margin:auto; }
 
+/* Accesibilidad: foco visible consistente */
+:focus-visible{
+  outline:none;
+  box-shadow: var(--focus-ring);
+  border-radius: 8px;
+}
+
+/* Reduce motion si el usuario lo solicita */
+@media (prefers-reduced-motion: reduce){
+  *{
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* =========================
    Header (limpio, sin franja)
    ========================= */
@@ -29,7 +52,7 @@ html,body{
   color:var(--green);
   padding:14px 0;
   box-shadow:0 1px 0 rgba(0,0,0,.06);
-  position:sticky; top:0; z-index:1000; /* opcional, queda fijo */
+  position:sticky; top:0; z-index:1000; /* fijo al hacer scroll */
 }
 .app-header h1{
   margin:0;
@@ -48,17 +71,33 @@ html,body{
   opacity:.95;
 }
 .nav a:hover{ opacity:1; text-decoration:underline; }
+/* activa de Django (.active en nav-link) */
+.nav .active{ text-decoration:underline; font-weight:600; }
 
 /* =========================
-   Hero naranja → verde
+   Hero naranja → verde (full-width)
    ========================= */
-.hero-sirepsi{
+.hero-sirepsi {
   background: linear-gradient(90deg, var(--orange) 0%, var(--green) 100%);
   color: var(--white);
-  padding: 56px 0 60px;
-  text-align: center;
+
+  /* espacio arriba y abajo */
+  padding: 3rem 0;
   border-bottom: 1px solid rgba(255,255,255,.08);
+
+  /* que ocupe todo el ancho de la ventana */
+  position: relative;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
+  width: 100vw;
+
+  /* centrar verticalmente el contenido si crece */
+  display: flex;
+  align-items: center;
 }
+
 .hero-sirepsi h1{
   margin: 0 0 10px 0;
   font-weight: 800;
@@ -71,13 +110,23 @@ html,body{
   font-size: 1.05rem;
 }
 
+/* Ajuste en pantallas pequeñas */
+@media (max-width: 768px) {
+  .hero-sirepsi {
+    padding: 2.5rem 0;
+  }
+}
+
 /* separa el contenido del hero */
 main.container{ padding-top: 24px; }
 
 /* =========================
    Cards portada (grid + hover)
    ========================= */
-.features{ max-width:1100px; margin:28px auto 0; }
+.features{
+  max-width:1100px;
+  margin:2.5rem auto 3rem;
+}
 
 .card-grid{
   display:grid;
@@ -89,14 +138,14 @@ main.container{ padding-top: 24px; }
 .card{
   background:#fff;
   border:1px solid #eef0f2;
-  border-radius:16px;
+  border-radius:var(--radius);
   padding:22px;
-  box-shadow:0 2px 8px rgba(0,0,0,.05);
+  box-shadow:var(--shadow-sm);
   transition: transform .18s ease, box-shadow .18s ease;
 }
 .card:hover{
   transform: translateY(-3px);
-  box-shadow:0 10px 24px rgba(0,0,0,.08);
+  box-shadow:var(--shadow-md);
 }
 
 /* Botón primario SIREPSI */
@@ -108,200 +157,83 @@ main.container{ padding-top: 24px; }
   border-radius:10px;
   padding:10px 14px;
   text-decoration:none;
+  line-height:1;
 }
 .btn-sirepsi:hover{ filter:brightness(.97); }
+.btn-sirepsi:focus-visible{ box-shadow: var(--focus-ring); }
 
 /* =========================
    Tabla
    ========================= */
+/* Nota: se aplican sobre Bootstrap sin romperlo */
 .table{
   width:100%;
   border-collapse:separate;
-  border-spacing:0 8px;
-  margin-top:14px
+  border-spacing:0 8px;   /* filas “flotantes” */
+  margin-top:14px;
 }
-.table th{
+.table thead th{
   font-weight:700;
   text-align:left;
   padding:10px 12px;
-  color:#333
+  color:#333;
+  background:#f8f9fa;     /* similar a .table-light */
+  border-bottom:2px solid #eee;
 }
-.table td{
+.table tbody td{
   background:#fff;
   border:1px solid #eee;
   border-left:none;
   border-right:none;
-  padding:10px 12px
+  padding:10px 12px;
 }
-.table tr{ box-shadow:0 1px 2px rgba(0,0,0,.03) }
-.table thead th{ border-bottom:2px solid #eee }
+.table tbody tr{
+  box-shadow:0 1px 2px rgba(0,0,0,.03);
+}
 
 /* =========================
    Buscador / paginación
    ========================= */
 .searchbar{
   display:flex;
-  gap:8
+  gap: 8px;
 }
 
-/* --- Estilos de impresión (Anexo 15) --- */
+/* Paginación: foco y estados accesibles */
+.pagination .page-link:focus-visible{
+  box-shadow: var(--focus-ring);
+}
+
+/* =========================
+   Autocomplete (lista ligera)
+   ========================= */
+#ac-list .list-group-item{
+  cursor:pointer;
+}
+#ac-list .list-group-item:focus-visible{
+  box-shadow: var(--focus-ring);
+}
+
+/* =========================
+   Impresión (genérica)
+   ========================= */
 @media print {
+  /* Oculta elementos de navegación/acción comunes */
   .app-header,
   .app-footer,
-  .form-kardex,
+  nav,
+  form,
+  .btn,
   .print-hide { display: none !important; }
 
-  main.container { width: 100%; max-width: 100%; margin: 0; padding: 0; }
-  .table { border-spacing: 0; }
-  .table th, .table td { border: 1px solid #999 !important; }
-}
-/* ===== Vista de impresión ===== */
-@media print {
-  .app-header, .app-footer, form, .btn, nav { display: none !important; }
-  main.container { width: 100% !important; padding: 0 !important; }
+  /* Área de contenido a ancho completo */
+  main.container { width: 100% !important; max-width: 100% !important; margin: 0; padding: 0; }
+
+  /* Tablas legibles en papel */
+  .table { border-spacing: 0 !important; border-collapse: collapse !important; }
+  .table th, .table td { border: 1px solid #999 !important; padding: 6px !important; }
+
+  /* Tipos y espacios sobrios */
   table { font-size: 12px; }
   h2 { margin-bottom: .5rem; }
 }
-{% extends "base.html" %}
-{% block title %}Kardex{% endblock %}
-
-{% block content %}
-
-<!-- ======= CSS de impresión específico para esta vista ======= -->
-<style>
-  /* En pantalla, los elementos "solo impresión" ocultos */
-  .print-only { display: none; }
-
-  @media print {
-    /* Oculta todo... */
-    body * { visibility: hidden; }
-    /* ...menos el área imprimible */
-    .print-area, .print-area * { visibility: visible; }
-    .print-area {
-      position: absolute;
-      left: 0; top: 0;
-      width: 100%;
-      margin: 0; padding: 0;
-    }
-    /* Oculta barra, footer, formulario y botones */
-    .app-header, .app-footer, .kardex-form, .btn, .nav { display: none !important; }
-
-    /* Muestra elementos solo para impresión */
-    .print-only { display: block !important; }
-
-    /* Ajustes de tabla en papel */
-    .table { border-collapse: collapse !important; }
-    .table th, .table td { border: 1px solid #ccc !important; padding: 6px !important; }
-  }
-</style>
-<!-- =========================================================== -->
-
-<h2 class="mb-3">Kardex</h2>
-
-<form method="get" class="kardex-form row g-3 align-items-end">
-  <div class="col-md-6">
-    <label class="form-label">Nombre del medicamento</label>
-    <input type="text" name="q" class="form-control" placeholder="Escribe el nombre..."
-           value="{{ q|default:'' }}">
-  </div>
-
-  <div class="col-md-2">
-    <label class="form-label">Almacén</label>
-    <input type="number" name="almacen" class="form-control" value="{{ almacen|default:'31' }}">
-  </div>
-
-  <div class="col-md-2">
-    <label class="form-label">Desde</label>
-    <input type="date" name="desde" class="form-control" value="{{ desde|default:'' }}">
-  </div>
-
-  <div class="col-md-2">
-    <label class="form-label">Hasta</label>
-    <input type="date" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
-  </div>
-
-  <div class="col-12 d-flex gap-2">
-    <button class="btn btn-success">
-      <i class="bi bi-search me-1"></i> Buscar
-    </button>
-
-    {% if encabezado %}
-      <button type="button" class="btn btn-outline-secondary" onclick="window.print()">
-        <i class="bi bi-printer me-1"></i> Imprimir
-      </button>
-    {% endif %}
-  </div>
-</form>
-
-{% if error %}
-  <div class="alert alert-warning mt-3">{{ error }}</div>
-{% endif %}
-
-{% if encabezado %}
-  <!-- ===== SOLO ESTO SE IMPRIME ===== -->
-  <div class="print-area">
-
-    <!-- Título solo para impresión -->
-    <div class="print-only mb-3">
-      <h2 class="mb-0">Anexo 15 – Kardex de Psicotrópicos</h2>
-      {% if desde and hasta %}
-        <small>Rango: {{ desde }} a {{ hasta }} &middot; Almacén: {{ almacen }}</small>
-      {% endif %}
-      <hr>
-    </div>
-
-    <!-- Encabezado del medicamento -->
-    <div class="row">
-      <div class="col-md-6">
-        <p><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
-        <p><strong>DCI:</strong> {{ encabezado.dci }}</p>
-        <p><strong>Laboratorio:</strong> {{ encabezado.laboratorio }}</p>
-      </div>
-      <div class="col-md-6">
-        <p><strong>Concentración:</strong> {{ encabezado.concentracion }}</p>
-        <p><strong>Presentación:</strong> {{ encabezado.presentacion }}</p>
-        <p><strong>Código / Codificación:</strong> {{ encabezado.med_codigo }} / {{ encabezado.codificacion }}</p>
-      </div>
-    </div>
-
-    {% if rows %}
-      <div class="table-responsive mt-3">
-        <table class="table table-sm align-middle">
-          <thead class="table-light">
-            <tr>
-              <th>Fecha</th>
-              <th>Cant. ingreso</th>
-              <th>Nombre paciente</th>
-              <th>Nombre médico</th>
-              <th>Nº receta</th>
-              <th>Cant. egreso</th>
-              <th>Saldo anterior</th>
-              <th>Saldo actual</th>
-              <th>Observaciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for r in rows %}
-              <tr>
-                <td>{{ r.fecha }}</td>
-                <td class="text-end">{{ r.cantidad_ingreso }}</td>
-                <td>{{ r.nombre_paciente }}</td>
-                <td>{{ r.nombre_medico }}</td>
-                <td>{{ r.no_receta }}</td>
-                <td class="text-end">{{ r.cantidad_egreso }}</td>
-                <td class="text-end">{{ r.saldo_anterior }}</td>
-                <td class="text-end">{{ r.saldo_actual }}</td>
-                <td>{{ r.observaciones }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="alert alert-info mt-3">Sin movimientos en el rango seleccionado.</div>
-    {% endif %}
-  </div>
-  <!-- ===== FIN SOLO IMPRIME ESTO ===== -->
-{% endif %}
-
-{% endblock %}

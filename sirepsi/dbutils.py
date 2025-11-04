@@ -1,29 +1,59 @@
 # sirepsi/dbutils.py
+from __future__ import annotations
+
+from datetime import date
+from typing import Any, Dict, List, Optional, Sequence
+
 from django.db import connections
 
-def query_bdfarmacia(sql: str, params=None):
+__all__ = [
+    "query_bdfarmacia",
+    "get_med_by_codificacion_or_codigo",
+    "kardex_encabezado",
+    "kardex_detalle",
+    "prescripciones_detalle",
+]
+
+# Alias de conexión usado por todo el módulo (visible en auditorías)
+CONNECTION_ALIAS = "BDFarmacia"
+
+
+def query_bdfarmacia(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
     """
-    Ejecuta SELECTs en la conexión 'BDFarmacia' y devuelve lista de dicts (keys en minúsculas).
-    Usa %s como placeholder. Si params es falsy, ejecuta sin segundo argumento.
+    Ejecuta SELECTs en la conexión 'BDFarmacia' y retorna filas como lista de dicts.
+    - Placeholders: usar %s (parametrización segura).
+    - Llaves del dict: nombres de columnas en minúsculas.
+    - Si 'params' es None, se ejecuta sin segundo argumento.
+
+    Nota: Esta función no altera la consulta ni post-procesa datos más allá de
+    mapear nombres de columnas y empaquetar a dict.
     """
-    rows = []
-    with connections["BDFarmacia"].cursor() as cur:
-        if params:
+    rows: List[Dict[str, Any]] = []
+
+    with connections[CONNECTION_ALIAS].cursor() as cur:
+        if params is not None:
             cur.execute(sql, tuple(params))
         else:
             cur.execute(sql)
+
         cols = [c[0].lower() for c in cur.description] if cur.description else []
         for r in cur.fetchall():
             rows.append({cols[i]: r[i] for i in range(len(cols))})
+
     return rows
 
 
 # ========= Helpers para búsqueda de medicamento =========
 
-def get_med_by_codificacion_or_codigo(term: str):
+
+def get_med_by_codificacion_or_codigo(term: str) -> Optional[Dict[str, Any]]:
     """
-    Busca por: MED_CODIGO exacto (si es numérico), MED_CODIFICACION exacta,
-    o coincidencia parcial en MED_COMERCIAL.
+    Busca un medicamento por:
+      - MED_CODIGO exacto (si 'term' es numérico),
+      - MED_CODIFICACION exacta,
+      - o coincidencia parcial en MED_COMERCIAL (LIKE %term%).
+
+    Retorna el primer match (TOP 1) como dict, o None si no hay resultados.
     """
     if term is None or str(term).strip() == "":
         return None
@@ -47,9 +77,10 @@ def get_med_by_codificacion_or_codigo(term: str):
     return res[0] if res else None
 
 
-def kardex_encabezado(med_codigo: int):
+def kardex_encabezado(med_codigo: int) -> Optional[Dict[str, Any]]:
     """
-    Encabezado a mostrar encima del Kardex (nombre, DCI, concentración, presentación, laboratorio).
+    Obtiene los datos del encabezado a mostrar encima del Kardex:
+      nombre_del_producto, dci, concentracion, presentacion, laboratorio, origen.
     """
     sql = """
         SELECT
@@ -67,12 +98,32 @@ def kardex_encabezado(med_codigo: int):
     return rows[0] if rows else None
 
 
-def kardex_detalle(med_codigo: int, almacen: int, fecha_desde, fecha_hasta):
+def kardex_detalle(
+    med_codigo: int,
+    almacen: int,
+    fecha_desde: date,
+    fecha_hasta: date,
+) -> List[Dict[str, Any]]:
     """
     Devuelve filas del Kardex con Paciente/Médico + saldo anterior y saldo acumulado.
+
     Columnas devueltas (keys):
-      fecha(dd/mm/aaaa), cantidad_ingreso, nombre_paciente, nombre_medico,
-      no_receta, cantidad_egreso, saldo_anterior, saldo_actual, observaciones
+      - fecha (dd/mm/aaaa)
+      - cantidad_ingreso
+      - nombre_paciente
+      - nombre_medico
+      - no_receta
+      - cantidad_egreso
+      - saldo_anterior
+      - saldo_actual
+      - observaciones
+
+    Notas de la consulta:
+      - CTE 'mov_raw': base de movimientos válidos por almacén y medicamento.
+      - 'saldo_anterior': suma firmada de movimientos previos al rango.
+      - 'rango'/'qty': define el rango y aplica signo a la cantidad según clase/doc.
+      - Joins a Recibos/Recetarios para derivar paciente/médico de diversas fuentes.
+      - 'saldo_actual': saldo_anterior + acumulado firmado (ventana ordenada por fecha/receta).
     """
     sql = """
     WITH mov_raw AS (
@@ -181,11 +232,24 @@ def kardex_detalle(med_codigo: int, almacen: int, fecha_desde, fecha_hasta):
     params = [almacen, med_codigo, fecha_desde, fecha_desde, fecha_hasta]
     return query_bdfarmacia(sql, params)
 
-def prescripciones_detalle(med_codigo: int, almacen: int, fecha_desde, fecha_hasta):
+
+def prescripciones_detalle(
+    med_codigo: int,
+    almacen: int,
+    fecha_desde: date,
+    fecha_hasta: date,
+) -> List[Dict[str, Any]]:
     """
     Devuelve la lista de prescripciones (egresos) para un medicamento y rango de fechas.
-    Columnas:
-      fecha(dd/mm/aaaa), nombre_paciente, nombre_medico, no_receta, observaciones
+
+    Columnas devueltas:
+      - fecha (dd/mm/aaaa)
+      - nombre_paciente
+      - nombre_medico
+      - no_receta
+      - observaciones
+
+    Nota: usamos qty_signed < 0 para filtrar EGRESOS (dispensaciones).
     """
     sql = """
     WITH mov_raw AS (
