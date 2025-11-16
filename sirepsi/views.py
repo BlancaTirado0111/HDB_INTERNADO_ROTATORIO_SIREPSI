@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from io import BytesIO
+import re
 import csv
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
@@ -12,10 +13,30 @@ from django.core.paginator import Paginator
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
 
-# XLSX opcional con openpyxl (si no está, igual funciona el CSV)
+# ================== DEPENDENCIAS OPCIONALES ==================
+
+# PDF (ReportLab)
+try:
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import (
+        SimpleDocTemplate,
+        Table,
+        TableStyle,
+        Paragraph,
+        Spacer,
+    )
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+
+    HAS_REPORTLAB = True
+except Exception:
+    HAS_REPORTLAB = False
+
+# XLSX (openpyxl)
 try:
     import openpyxl
-    from openpyxl.styles import Font
+    from openpyxl.styles import Font, Border, Side, Alignment
     from openpyxl.utils import get_column_letter
 
     HAS_OPENPYXL = True
@@ -23,13 +44,15 @@ except Exception:
     HAS_OPENPYXL = False
 
 from .dbutils import (
-    kardex_detalle,
-    kardex_encabezado,
-    prescripciones_detalle,
     query_bdfarmacia,
+    kardex_encabezado,
+    kardex_detalle,
+    prescripciones_detalle,
 )
 
-# ===================== HOME / UTILES =====================
+# ============================================================
+#                   HOME / UTILES
+# ============================================================
 
 
 def home(request):
@@ -73,7 +96,48 @@ def _page_window(page_obj, window: int = 2) -> List[Optional[int]]:
     return compact
 
 
-# ===================== MEDICAMENTOS (LISTA) =====================
+# ============================================================
+#                   MOVIMIENTOS: LISTA DE MEDS
+# ============================================================
+
+# Catálogo central de psicotrópicos utilizado en TODAS las vistas
+PSYCH_LIST: List[Tuple[str, str]] = [
+    ("N0501", "Alprazolam"),
+    ("N0306", "Clonazepam"),
+    ("N0312", "Clonazepam"),
+    ("N0504", "Diazepam"),
+    ("N0505", "Diazepam"),
+    ("N0309", "Fenobarbital"),
+    ("N0310", "Fenobarbital"),
+    ("N0311", "Fenobarbital"),
+    ("N0105", "Fentanilo con conservante"),
+    ("N0106", "Fentanilo sin conservante"),
+    ("N0511", "Midazolam"),
+    ("N0206", "Morfina"),
+    ("N0207", "Morfina (con o sin conservante)"),
+    ("N0116", "Remifentanilo"),
+]
+
+# (No se usan por ahora, pero quedan por si reactivas el filtro por tipo)
+MED_TYPES_CHOICES = [
+    ("benzo", "Benzodiacepinas"),
+    ("barbiturico", "Barbitúricos"),
+    ("opioide", "Opioides"),
+]
+
+MED_TYPES_CODES = {
+    "benzo": {"N0501", "N0306", "N0312", "N0504", "N0505", "N0511"},
+    "barbiturico": {"N0309", "N0310", "N0311"},
+    "opioide": {"N0105", "N0106", "N0206", "N0207", "N0116"},
+}
+
+DEFAULT_ALMACEN: int = 31
+
+
+def _psych_codes_sql_list() -> str:
+    """Crea la lista 'IN ('N0501','N0306',...)' segura desde PSYCH_LIST."""
+    codes = [c for c, _ in PSYCH_LIST]
+    return ", ".join(f"'{c}'" for c in codes)
 
 
 def medicamentos(request):
@@ -91,20 +155,14 @@ def medicamentos(request):
     pres = (request.GET.get("pres") or "").strip()
     order = (request.GET.get("order") or "nombre").lower()
 
-    # 1) WHERE base: solo los psicotrópicos
-    base_where = """
-        m.MED_CODIFICACION IN (
-            'N0501','N0306','N0312','N0504','N0505',
-            'N0309','N0310','N0311','N0105','N0106',
-            'N0511','N0226','N0227','N0116'
-        )
-    """
+    # 1) WHERE base: solo psicotrópicos definidos en PSYCH_LIST
+    base_where = f"m.MED_CODIFICACION IN ({_psych_codes_sql_list()})"
 
     # 2) Valores únicos para combos (laboratorio/presentación)
     sql_choices = f"""
         SELECT DISTINCT
             RTRIM(ISNULL(p.PRO_NOMBRE,''))  AS laboratorio,
-            RTRIM(ISNULL(m.med_unidad,'')) AS presentacion
+            RTRIM(ISNULL(m.med_unidad,''))  AS presentacion
         FROM dbo.fa_medicamento m
         LEFT JOIN dbo.fa_proveedor p
                ON p.Emp_Codigo = m.emp_codigo
@@ -172,7 +230,7 @@ def medicamentos(request):
     if where_clauses:
         sql += " AND " + " AND ".join(where_clauses)
 
-    # 4) Orden dinámico (evitando columnas duplicadas en ORDER BY)
+    # 4) Orden dinámico
     order_map: Dict[str, List[str]] = {
         "nombre": ["m.MED_COMERCIAL", "m.med_generico"],
         "codigo": ["m.MED_CODIGO"],
@@ -212,7 +270,6 @@ def medicamentos(request):
         qs_params["pres"] = pres
     if order:
         qs_params["order"] = order
-
     querystring = "&" + urlencode(qs_params) if qs_params else ""
 
     context = {
@@ -231,39 +288,9 @@ def medicamentos(request):
     return render(request, "medicamentos/lista.html", context)
 
 
-# ===================== MOVIMIENTOS (KARDEX) =====================
-
-PSYCH_LIST: List[Tuple[str, str]] = [
-    ("N0501", "Alprazolam"),
-    ("N0306", "Clonazepam"),
-    ("N0312", "Clonazepam"),
-    ("N0504", "Diazepam"),
-    ("N0505", "Diazepam"),
-    ("N0309", "Fenobarbital"),
-    ("N0310", "Fenobarbital"),
-    ("N0311", "Fenobarbital"),
-    ("N0105", "Fentanilo con conservante"),
-    ("N0106", "Fentanilo sin conservante"),
-    ("N0511", "Midazolam"),
-    ("N0206", "Morfina"),
-    ("N0207", "Morfina (con o sin conservante)"),
-    ("N0116", "Remifentanilo"),
-]
-
-# (No se usan por ahora, pero las dejamos por si reactivas el filtro por tipo)
-MED_TYPES_CHOICES = [
-    ("benzo", "Benzodiacepinas"),
-    ("barbiturico", "Barbitúricos"),
-    ("opioide", "Opioides"),
-]
-
-MED_TYPES_CODES = {
-    "benzo": {"N0501", "N0306", "N0312", "N0504", "N0505", "N0511"},
-    "barbiturico": {"N0309", "N0310", "N0311"},
-    "opioide": {"N0105", "N0106", "N0206", "N0207", "N0116"},
-}
-
-DEFAULT_ALMACEN: int = 31
+# ============================================================
+#                   MOVIMIENTOS (KARDEX)
+# ============================================================
 
 
 def meds_suggest(request):
@@ -336,6 +363,9 @@ def _resolve_med_by_name_or_code(name_or_code: str) -> Optional[Dict[str, Any]]:
 def movimientos_kardex(request):
     """
     Vista Kardex: movimientos por medicamento y rango de fechas.
+    Orden de columnas (igual que el formato físico):
+    FECHA | CANTIDAD INGRESO | CANTIDAD EGRESO | SALDO ANTERIOR | SALDO ACTUAL |
+    N° RECETA | NOMBRE DEL PACIENTE | NOMBRE MÉDICO | N° DE FACTURA | OBSERVACIONES
     """
     q = (request.GET.get("q") or "").strip()
     desde = (request.GET.get("desde") or "").strip()
@@ -355,9 +385,11 @@ def movimientos_kardex(request):
         "total_movs": 0,
     }
 
+    # Pantalla vacía sin filtros
     if not (q or desde or hasta):
         return render(request, "movimientos/kardex.html", ctx)
 
+    # Validaciones
     if len(q) < 3:
         ctx["error"] = "Escribe al menos 3 letras del nombre del medicamento."
         return render(request, "movimientos/kardex.html", ctx)
@@ -373,11 +405,13 @@ def movimientos_kardex(request):
         ctx["error"] = "La fecha hasta debe ser mayor o igual a la fecha desde."
         return render(request, "movimientos/kardex.html", ctx)
 
+    # Resolver medicamento
     med = _resolve_med_by_name_or_code(q)
     if not med:
         ctx["error"] = "No se encontró un medicamento con ese nombre."
         return render(request, "movimientos/kardex.html", ctx)
 
+    # Cachear dataset
     cache_key = (
         f"kardex:{DEFAULT_ALMACEN}:{med['med_codigo']}:"
         f"{d_desde.isoformat()}:{d_hasta.isoformat()}"
@@ -395,6 +429,7 @@ def movimientos_kardex(request):
     else:
         enc, rows = data
 
+    # Totales
     sum_ing = sum(float(r.get("cantidad_ingreso") or 0) for r in rows)
     sum_egr = sum(float(r.get("cantidad_egreso") or 0) for r in rows)
     saldo_ini = float(rows[0]["saldo_anterior"]) if rows else 0.0
@@ -406,7 +441,9 @@ def movimientos_kardex(request):
             "encabezado": {
                 "nombre": enc["nombre_del_producto"] if enc else med["nombre"],
                 "dci": enc["dci"] if enc else med["dci"],
-                "concentracion": enc["concentracion"] if enc else med["concentracion"],
+                "concentracion": enc["concentracion"]
+                if enc
+                else med["concentracion"],
                 "presentacion": enc["presentacion"] if enc else med["presentacion"],
                 "laboratorio": enc["laboratorio"] if enc else None,
             },
@@ -421,13 +458,15 @@ def movimientos_kardex(request):
     return render(request, "movimientos/kardex.html", ctx)
 
 
-# ===================== PRESCRIPCIONES =====================
+# ============================================================
+#                   PRESCRIPCIONES
+# ============================================================
 
 
 def prescripciones(request):
     """
     Lista de prescripciones por medicamento y rango de fechas.
-    Nuevo: filtro opcional por nombre de médico (desde un combo).
+    Filtro opcional por nombre de médico (desde combo).
     """
     q = (request.GET.get("q") or "").strip()
     medico = (request.GET.get("medico") or "").strip()
@@ -445,7 +484,7 @@ def prescripciones(request):
         "total_presc": 0,
         "pacientes_unicos": 0,
         "medicos_unicos": 0,
-        "medicos_disponibles": [],   # 👈 importante para el combo
+        "medicos_disponibles": [],
     }
 
     # Pantalla vacía
@@ -468,7 +507,7 @@ def prescripciones(request):
         ctx["error"] = "La fecha hasta debe ser mayor o igual a la fecha desde."
         return render(request, "prescripciones/lista.html", ctx)
 
-    # Limitar rango máximo
+    # Limitar rango (ejemplo: 31 días)
     delta_dias = (d_hasta - d_desde).days
     if delta_dias > 31:
         ctx["error"] = (
@@ -483,7 +522,7 @@ def prescripciones(request):
         ctx["error"] = "No se encontró un medicamento con ese nombre."
         return render(request, "prescripciones/lista.html", ctx)
 
-    # Caché (mismo dataset, sin filtro por médico)
+    # Caché (dataset sin filtro por médico)
     cache_key = (
         f"presc:{DEFAULT_ALMACEN}:{med['med_codigo']}:"
         f"{d_desde.isoformat()}:{d_hasta.isoformat()}"
@@ -497,11 +536,11 @@ def prescripciones(request):
             fecha_desde=d_desde,
             fecha_hasta=d_hasta,
         )
-        cache.set(cache_key, (enc, rows), 300)  # 5 minutos
+        cache.set(cache_key, (enc, rows), 300)
     else:
         enc, rows = data
 
-    # 👇 lista de médicos disponibles para el combo
+    # Médicos disponibles para combo
     medicos_disponibles = sorted(
         {
             (r.get("nombre_medico") or "").strip()
@@ -510,7 +549,7 @@ def prescripciones(request):
         }
     )
 
-    # 🔎 Filtro por médico (exacto, pero ignorando mayúsculas y espacios)
+    # Filtro por médico (exacto, case-insensitive)
     rows_filtradas = rows
     if medico:
         m_ref = medico.strip().lower()
@@ -544,7 +583,9 @@ def prescripciones(request):
             "encabezado": {
                 "nombre": enc["nombre_del_producto"] if enc else med["nombre"],
                 "dci": enc["dci"] if enc else med["dci"],
-                "concentracion": enc["concentracion"] if enc else med["concentracion"],
+                "concentracion": enc["concentracion"]
+                if enc
+                else med["concentracion"],
                 "presentacion": enc["presentacion"] if enc else med["presentacion"],
                 "laboratorio": enc["laboratorio"] if enc else None,
             },
@@ -558,8 +599,16 @@ def prescripciones(request):
     return render(request, "prescripciones/lista.html", ctx)
 
 
+# ============================================================
+#                   EXPORTS (CSV / XLSX / PDF)
+# ============================================================
 
-# ===================== EXPORTS (CSV / XLSX) =====================
+
+def _safe_filename(base: str) -> str:
+    """Limpia un nombre para Content-Disposition."""
+    base = (base or "reporte").strip()
+    base = re.sub(r"[^\w\-.]+", "_", base, flags=re.UNICODE)
+    return base or "reporte"
 
 
 def _resolver_kardex_dataset(request):
@@ -576,7 +625,7 @@ def _resolver_kardex_dataset(request):
     alm = request.GET.get("alm")
 
     if not q:
-        raise ValueError("Falta el nombre del medicamento")
+        raise ValueError("Falta el nombre del medicamento.")
     try:
         d_desde = datetime.strptime(desde, "%Y-%m-%d").date()
         d_hasta = datetime.strptime(hasta, "%Y-%m-%d").date()
@@ -585,46 +634,45 @@ def _resolver_kardex_dataset(request):
 
     med = _resolve_med_by_name_or_code(q)
     if not med:
-        raise ValueError("No se encontró el medicamento")
+        raise ValueError("No se encontró el medicamento.")
 
     try:
         alm_int = int(alm) if alm not in (None, "", "null") else DEFAULT_ALMACEN
     except Exception:
         alm_int = DEFAULT_ALMACEN
 
-    enc = kardex_encabezado(med["med_codigo"])
+    enc = kardex_encabezado(med["med_codigo"]) or {}
     rows = kardex_detalle(
         med_codigo=med["med_codigo"],
         almacen=alm_int,
         fecha_desde=d_desde,
         fecha_hasta=d_hasta,
     )
-    return enc or {}, rows, d_desde, d_hasta, alm_int
+    return enc, rows, d_desde, d_hasta, alm_int
 
 
 def export_kardex_csv(request):
-    """Exporta el Kardex a CSV (UTF-8 BOM + CRLF)."""
+    """Exporta el Kardex a CSV (UTF-8 BOM + CRLF) en el MISMO orden que la tabla."""
     try:
         enc, rows, d_desde, d_hasta, alm = _resolver_kardex_dataset(request)
     except Exception as e:
         return HttpResponse(
-            f"Error: {e}", status=400, content_type="text/plain; charset=utf-8"
+            f"Error: {e}",
+            status=400,
+            content_type="text/plain; charset=utf-8",
         )
 
-    base = enc.get("nombre_del_producto", "medicamento")
-    safe = (
-        "".join(ch for ch in base if ch.isalnum() or ch in ("_", "-", ".")).strip()
-        or "medicamento"
-    )
-    filename = f"Kardex_{safe}{d_desde}{d_hasta}.csv"
+    base = _safe_filename(enc.get("nombre_del_producto", "medicamento"))
+    filename = f"Kardex_{base}{d_desde}{d_hasta}.csv"
 
     resp = HttpResponse(content_type="text/csv; charset=utf-8")
-    resp["Content-Disposition"] = f'attachment; filename=\"{filename}\"'
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
 
-    resp.write("\ufeff")  # BOM
-
+    # BOM
+    resp.write("\ufeff")
     w = csv.writer(resp, lineterminator="\r\n")
 
+    # Cabecera informativa
     w.writerow(["KARDEX"])
     w.writerow([f"Producto: {enc.get('nombre_del_producto','')}"])
     w.writerow([f"DCI: {enc.get('dci','')}"])
@@ -634,31 +682,33 @@ def export_kardex_csv(request):
     w.writerow([f"Rango: {d_desde} a {d_hasta}"])
     w.writerow([])
 
-    w.writerow(
-        [
-            "Fecha",
-            "Cantidad Ingreso",
-            "Nombre Paciente",
-            "Nombre Médico",
-            "No Receta",
-            "Cantidad Egreso",
-            "Saldo Anterior",
-            "Saldo Actual",
-            "Observaciones",
-        ]
-    )
+    # Encabezados (formato físico)
+    headers = [
+        "Fecha",
+        "Cantidad Ingreso",
+        "Cantidad Egreso",
+        "Saldo Anterior",
+        "Saldo Actual",
+        "N° Receta",
+        "Nombre del Paciente",
+        "Nombre Médico",
+        "N° de Factura",
+        "Observaciones",
+    ]
+    w.writerow(headers)
 
     for r in rows:
         w.writerow(
             [
                 r.get("fecha", ""),
                 r.get("cantidad_ingreso", ""),
-                r.get("nombre_paciente", ""),
-                r.get("nombre_medico", ""),
-                r.get("no_receta", ""),
                 r.get("cantidad_egreso", ""),
                 r.get("saldo_anterior", ""),
                 r.get("saldo_actual", ""),
+                r.get("no_receta", ""),
+                r.get("nombre_paciente", ""),
+                r.get("nombre_medico", ""),
+                r.get("nro_factura", ""),
                 (r.get("observaciones", "") or "")
                 .replace("\r", " ")
                 .replace("\n", " "),
@@ -669,11 +719,16 @@ def export_kardex_csv(request):
 
 
 def export_kardex_xlsx(request):
-    """Exporta el Kardex a XLSX con openpyxl."""
+    """
+    Exporta el Kardex a XLSX con formato tipo formulario:
+    - Bloque superior con datos del medicamento.
+    - Tabla con bordes finos en todas las celdas.
+    - Encabezados en negrita y centrados.
+    - Números alineados a la derecha, fechas dd/mm/aaaa.
+    """
     if not HAS_OPENPYXL:
         return HttpResponse(
-            "Para exportar a XLSX instala openpyxl: pip install openpyxl\n"
-            "Alternativa inmediata: usa 'Exportar CSV (Excel)'.",
+            "Falta dependencia: openpyxl. Instala con: pip install openpyxl",
             status=501,
             content_type="text/plain; charset=utf-8",
         )
@@ -682,61 +737,126 @@ def export_kardex_xlsx(request):
         enc, rows, d_desde, d_hasta, alm = _resolver_kardex_dataset(request)
     except Exception as e:
         return HttpResponse(
-            f"Error: {e}", status=400, content_type="text/plain; charset=utf-8"
+            f"Error: {e}",
+            status=400,
+            content_type="text/plain; charset=utf-8",
         )
 
-    base = enc.get("nombre_del_producto", "medicamento")
-    safe = (
-        "".join(ch for ch in base if ch.isalnum() or ch in ("_", "-", ".")).strip()
-        or "medicamento"
-    )
-    filename = f"Kardex_{safe}{d_desde}{d_hasta}.xlsx"
+    base = _safe_filename(enc.get("nombre_del_producto", "medicamento"))
+    filename = f"Kardex_{base}{d_desde}{d_hasta}.xlsx"
+
+    headers = [
+        "Fecha",
+        "Cantidad Ingreso",
+        "Cantidad Egreso",
+        "Saldo Anterior",
+        "Saldo Actual",
+        "N° Receta",
+        "Nombre del Paciente",
+        "Nombre Médico",
+        "N° de Factura",
+        "Observaciones",
+    ]
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Kardex"
 
+    # ----- Bloque superior -----
     ws["A1"] = "KARDEX"
-    ws["A2"] = f"Producto: {enc.get('nombre_del_producto','')}"
-    ws["A3"] = f"DCI: {enc.get('dci','')}"
-    ws["A4"] = f"Concentración: {enc.get('concentracion','')}"
-    ws["A5"] = f"Presentación: {enc.get('presentacion','')}"
-    ws["A6"] = f"Laboratorio: {enc.get('laboratorio','')}"
-    ws["A7"] = f"Rango: {d_desde} a {d_hasta}"
+    ws["A1"].font = Font(bold=True, size=14)
 
-    ws.append([""])
-    headers = [
-        "Fecha",
-        "Cantidad Ingreso",
-        "Nombre Paciente",
-        "Nombre Médico",
-        "No Receta",
-        "Cantidad Egreso",
-        "Saldo Anterior",
-        "Saldo Actual",
-        "Observaciones",
+    meta = [
+        f"Producto: {enc.get('nombre_del_producto', '')}",
+        f"DCI: {enc.get('dci', '')}",
+        f"Concentración: {enc.get('concentracion', '')}",
+        f"Presentación: {enc.get('presentacion', '')}",
+        f"Laboratorio: {enc.get('laboratorio', '')}",
+        f"Rango: {d_desde} a {d_hasta}",
     ]
-    ws.append(headers)
 
-    for r in rows:
-        ws.append(
-            [
-                r.get("fecha", ""),
-                r.get("cantidad_ingreso", 0),
-                r.get("nombre_paciente", ""),
-                r.get("nombre_medico", ""),
-                r.get("no_receta", ""),
-                r.get("cantidad_egreso", 0),
-                r.get("saldo_anterior", 0),
-                r.get("saldo_actual", 0),
-                r.get("observaciones", ""),
-            ]
-        )
+    row_idx = 2
+    for line in meta:
+        ws.cell(row=row_idx, column=1, value=line)
+        row_idx += 1
 
-    for cell in ws["A9":"I9"][0]:
+    # Línea en blanco
+    row_idx += 1
+
+    # ----- Encabezados de la tabla -----
+    header_row = row_idx
+    for col_idx, title in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=title)
         cell.font = Font(bold=True)
-    for col_idx in range(1, len(headers) + 1):
-        ws.column_dimensions[get_column_letter(col_idx)].width = 18
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Helper para convertir fecha 'YYYY-MM-DD' a fecha Excel
+    def _coerce_excel_date(val):
+        if isinstance(val, str) and len(val) == 10 and val[4] == "-" and val[7] == "-":
+            try:
+                return datetime.strptime(val, "%Y-%m-%d").date()
+            except Exception:
+                return val
+        return val
+
+    # ----- Filas de datos -----
+    for r in rows:
+        row_idx += 1
+        values = [
+            _coerce_excel_date(r.get("fecha", "")),
+            r.get("cantidad_ingreso", 0),
+            r.get("cantidad_egreso", 0),
+            r.get("saldo_anterior", 0),
+            r.get("saldo_actual", 0),
+            r.get("no_receta", ""),
+            r.get("nombre_paciente", ""),
+            r.get("nombre_medico", ""),
+            r.get("nro_factura", ""),
+            (r.get("observaciones", "") or "")
+            .replace("\r", " ")
+            .replace("\n", " "),
+        ]
+        for col_idx, value in enumerate(values, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+
+    # ----- Formato: bordes, alineación, anchos -----
+    thin = Side(border_style="thin", color="000000")
+
+    # Bordes en toda la tabla
+    for row in ws.iter_rows(
+        min_row=header_row,
+        max_row=ws.max_row,
+        min_col=1,
+        max_col=len(headers),
+    ):
+        for cell in row:
+            cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
+
+    # Alineación y formato columnas
+    for row in ws.iter_rows(
+        min_row=header_row + 1,
+        max_row=ws.max_row,
+        min_col=1,
+        max_col=len(headers),
+    ):
+        for cell in row:
+            col = cell.column
+            if col == 1:  # Fecha
+                cell.number_format = "DD/MM/YYYY"
+                cell.alignment = Alignment(horizontal="center")
+            elif col in (2, 3, 4, 5):  # numéricas
+                cell.number_format = "0.00"
+                cell.alignment = Alignment(horizontal="right")
+            elif col in (7, 8, 10):  # campos largos: paciente, médico, observaciones
+                cell.alignment = Alignment(horizontal="left", wrap_text=True)
+            else:
+                cell.alignment = Alignment(horizontal="left")
+
+    widths = [12, 16, 16, 16, 16, 14, 28, 28, 14, 36]
+    for col_idx, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    ws.freeze_panes = ws[f"A{header_row + 1}"]
 
     bio = BytesIO()
     wb.save(bio)
@@ -744,7 +864,128 @@ def export_kardex_xlsx(request):
 
     resp = HttpResponse(
         bio.getvalue(),
-        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
     )
-    resp["Content-Disposition"] = f'attachment; filename=\"{filename}\"'
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
+
+
+def export_kardex_pdf(request):
+    """Exporta el Kardex a PDF usando ReportLab (paisaje A4)."""
+    if not HAS_REPORTLAB:
+        return HttpResponse(
+            "Falta dependencia: reportlab. Instala con: pip install reportlab",
+            status=501,
+            content_type="text/plain; charset=utf-8",
+        )
+
+    try:
+        enc, rows, d_desde, d_hasta, alm = _resolver_kardex_dataset(request)
+    except Exception as e:
+        return HttpResponse(
+            f"Error: {e}",
+            status=400,
+            content_type="text/plain; charset=utf-8",
+        )
+
+    base = _safe_filename(enc.get("nombre_del_producto", "medicamento"))
+    filename = f"Kardex_{base}{d_desde}{d_hasta}.pdf"
+
+    bio = BytesIO()
+    doc = SimpleDocTemplate(
+        bio,
+        pagesize=landscape(A4),
+        leftMargin=18,
+        rightMargin=18,
+        topMargin=18,
+        bottomMargin=18,
+    )
+
+    styles = getSampleStyleSheet()
+    story = []
+    story.append(Paragraph("<b>KARDEX</b>", styles["Title"]))
+    meta_text = (
+        f"Producto: {enc.get('nombre_del_producto','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"DCI: {enc.get('dci','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"Concentración: {enc.get('concentracion','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"Presentación: {enc.get('presentacion','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"Laboratorio: {enc.get('laboratorio','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"Rango: {d_desde} a {d_hasta}"
+    )
+    story.append(Paragraph(meta_text, styles["Normal"]))
+    story.append(Spacer(1, 8))
+
+    headers = [
+        "Fecha",
+        "Cant. Ingreso",
+        "Cant. Egreso",
+        "Saldo Ant.",
+        "Saldo Act.",
+        "N° Receta",
+        "Nombre del Paciente",
+        "Nombre Médico",
+        "N° Factura",
+        "Observaciones",
+    ]
+    data = [headers]
+    for r in rows:
+        data.append(
+            [
+                r.get("fecha", ""),
+                r.get("cantidad_ingreso", ""),
+                r.get("cantidad_egreso", ""),
+                r.get("saldo_anterior", ""),
+                r.get("saldo_actual", ""),
+                r.get("no_receta", ""),
+                r.get("nombre_paciente", ""),
+                r.get("nombre_medico", ""),
+                r.get("nro_factura", ""),
+                (r.get("observaciones", "") or "")
+                .replace("\r", " ")
+                .replace("\n", " "),
+            ]
+        )
+
+    col_widths = [
+        2.3 * cm,
+        2.8 * cm,
+        2.8 * cm,
+        2.8 * cm,
+        2.8 * cm,
+        3.2 * cm,
+        6.8 * cm,
+        6.8 * cm,
+        3.0 * cm,
+        7.0 * cm,
+    ]
+
+    tbl = Table(data, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 9),
+                ("ALIGN", (1, 1), (4, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f9f7")]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+
+    story.append(tbl)
+    doc.build(story)
+
+    bio.seek(0)
+    resp = HttpResponse(bio.getvalue(), content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+

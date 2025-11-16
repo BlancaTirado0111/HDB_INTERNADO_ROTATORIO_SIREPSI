@@ -3,34 +3,20 @@
 
 {% block content %}
 
-<style>
-  .print-only { display: none; }
-  @media print {
-    body * { visibility: hidden; }
-    .print-area, .print-area * { visibility: visible; }
-    .print-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 0; }
-    .app-header, .app-footer, .kardex-form, .btn, .nav { display: none !important; }
-    .print-only { display: block !important; }
-    .table { border-collapse: collapse !important; }
-    .table th, .table td { border: 1px solid #ccc !important; padding: 6px !important; }
-  }
-  .text-end { text-align: end; }
-</style>
-
-<h2 class="mb-3">Kardex</h2>
+<h2 class="mb-3 page-title">Kardex</h2>
 
 <form method="get" class="row g-3 gx-4 align-items-end position-relative kardex-form">
 
   <!-- Nombre del medicamento -->
   <div class="col-lg-6 col-md-12">
-    <label class="form-label">Nombre del medicamento</label>
+    <label class="form-label" for="input-medicamento">Nombre del medicamento</label>
     <div class="input-group" id="ac-wrapper">
       <input type="text" name="q" id="input-medicamento"
              class="form-control"
              placeholder="Escribe al menos 3 letras o abre la lista…"
              autocomplete="off"
              value="{{ q|default:'' }}">
-      <button type="button" class="btn btn-outline-secondary" id="btn-open-list">
+      <button type="button" class="btn btn-outline-secondary" id="btn-open-list" aria-label="Abrir lista de medicamentos">
         <i class="bi bi-search"></i>
       </button>
     </div>
@@ -42,14 +28,14 @@
 
   <!-- Desde -->
   <div class="col-lg-3 col-md-6">
-    <label class="form-label">Desde</label>
-    <input type="date" name="desde" class="form-control" value="{{ desde|default:'' }}">
+    <label class="form-label" for="f-desde">Desde</label>
+    <input type="date" id="f-desde" name="desde" class="form-control" value="{{ desde|default:'' }}">
   </div>
 
   <!-- Hasta -->
   <div class="col-lg-3 col-md-6">
-    <label class="form-label">Hasta</label>
-    <input type="date" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
+    <label class="form-label" for="f-hasta">Hasta</label>
+    <input type="date" id="f-hasta" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
   </div>
 
   <!-- Botones -->
@@ -64,9 +50,10 @@
       </button>
 
       <a class="btn btn-outline-secondary"
-         href="{% url 'kardex_export_csv' %}?q={{ q|urlencode }}&desde={{ desde }}&hasta={{ hasta }}">
-        <i class="bi bi-filetype-csv me-1"></i> Exportar CSV (Excel)
-      </a>
+   href="{% url 'kardex_export_pdf' %}?q={{ q|urlencode }}&desde={{ desde }}&hasta={{ hasta }}">
+  <i class="bi bi-filetype-pdf me-1"></i> Exportar PDF
+</a>
+
 
       <a class="btn btn-outline-secondary"
          href="{% url 'kardex_export_xlsx' %}?q={{ q|urlencode }}&desde={{ desde }}&hasta={{ hasta }}">
@@ -74,7 +61,6 @@
       </a>
     {% endif %}
   </div>
-
 </form>
 
 <!-- Autocomplete ligero -->
@@ -155,69 +141,64 @@
 {% endif %}
 
 {% if encabezado %}
-  <div class="print-area">
-    <!-- Encabezado estilo modelo físico -->
-    <div class="print-only mb-3">
-      <h2 class="mb-0">KARDEX</h2>
-      {% if desde and hasta %}
-        <small>Rango: {{ desde }} a {{ hasta }}</small>
-      {% endif %}
-      <hr>
-    </div>
-
-    <div class="row">
+  <!-- Activamos modo "comfy" para dar más aire -->
+  <div class="print-area is-comfy reveal">
+    <!-- Cabecera al estilo físico -->
+    <div class="row g-3">
       <div class="col-md-6">
-        <p><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
-        <p><strong>DCI:</strong> {{ encabezado.dci }}</p>
-        <p><strong>Laboratorio:</strong> {{ encabezado.laboratorio }}</p>
+        <p class="mb-1"><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
+        <p class="mb-1"><strong>DCI:</strong> {{ encabezado.dci }}</p>
+        <p class="mb-1"><strong>Laboratorio:</strong> {{ encabezado.laboratorio }}</p>
       </div>
       <div class="col-md-6">
-        <p><strong>Concentración:</strong> {{ encabezado.concentracion }}</p>
-        <p><strong>Presentación:</strong> {{ encabezado.presentacion }}</p>
-        <p><strong>Origen:</strong> </p>
+        <p class="mb-1"><strong>Concentración:</strong> {{ encabezado.concentracion }}</p>
+        <p class="mb-1"><strong>Presentación:</strong> {{ encabezado.presentacion }}</p>
+        {% if desde and hasta %}<p class="mb-1"><strong>Rango:</strong> {{ desde }} a {{ hasta }}</p>{% endif %}
       </div>
     </div>
 
     {% if rows %}
       <div class="table-responsive mt-3">
-        <table class="table table-sm align-middle">
+        <!-- Quitamos table-sm y activamos sticky de primera columna -->
+        <table class="table align-middle table--sticky-col">
           <thead class="table-light">
             <tr>
               <th>Fecha</th>
-              <th>Nombre Paciente</th>
-              <th>Nombre Médico</th>
               <th class="text-end">Cantidad Ingreso</th>
-              <th>No Receta</th>
               <th class="text-end">Cantidad Egreso</th>
               <th class="text-end">Saldo Anterior</th>
               <th class="text-end">Saldo Actual</th>
+              <th>N° Receta</th>
+              <th>Nombre del Paciente</th>
+              <th>Nombre Médico</th>
+              <th>N° de Factura</th>
               <th>Observaciones</th>
             </tr>
           </thead>
           <tbody>
             {% for r in rows %}
               <tr>
-                <td>{{ r.fecha }}</td>
+                <td class="nowrap">{{ r.fecha }}</td>
+                <td class="text-end tnum nowrap">{{ r.cantidad_ingreso|default:""|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.cantidad_egreso|default:""|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.saldo_anterior|default:""|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.saldo_actual|default:""|floatformat:"2" }}</td>
+                <td class="tnum nowrap">{{ r.no_receta }}</td>
                 <td>{{ r.nombre_paciente }}</td>
                 <td>{{ r.nombre_medico }}</td>
-                <td class="text-end">{{ r.cantidad_ingreso|default:""|floatformat:"2" }}</td>
-                <td>{{ r.no_receta }}</td>
-                <td class="text-end">{{ r.cantidad_egreso|default:""|floatformat:"2" }}</td>
-                <td class="text-end">{{ r.saldo_anterior|default:""|floatformat:"2" }}</td>
-                <td class="text-end">{{ r.saldo_actual|default:""|floatformat:"2" }}</td>
+                <td class="tnum nowrap">{{ r.nro_factura|default_if_none:'' }}</td>
                 <td>{{ r.observaciones }}</td>
               </tr>
             {% endfor %}
           </tbody>
           <tfoot>
             <tr class="fw-semibold">
-              <td colspan="3" class="text-end">Totales:</td>
-              <td class="text-end">{{ sum_ingresos|default:"0"|floatformat:"2" }}</td>
-              <td></td>
-              <td class="text-end">{{ sum_egresos|default:"0"|floatformat:"2" }}</td>
-              <td class="text-end">{{ saldo_inicial|default:"0"|floatformat:"2" }}</td>
-              <td class="text-end">{{ saldo_final|default:"0"|floatformat:"2" }}</td>
-              <td></td>
+              <td class="text-end">Totales:</td>
+              <td class="text-end tnum nowrap">{{ sum_ingresos|default:"0"|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ sum_egresos|default:"0"|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ saldo_inicial|default:"0"|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ saldo_final|default:"0"|floatformat:"2" }}</td>
+              <td colspan="5"></td>
             </tr>
           </tfoot>
         </table>
