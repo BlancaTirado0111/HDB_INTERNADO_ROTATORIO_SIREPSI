@@ -5,9 +5,9 @@
 
 <h2 class="mb-3">Prescripciones</h2>
 
-{# ======== Formulario de búsqueda ======== #}
 <form method="get" class="row g-3 align-items-end position-relative" aria-label="Formulario de búsqueda de prescripciones">
-  <div class="col-md-6">
+  <!-- Medicamento -->
+  <div class="col-lg-5 col-md-12">
     <label class="form-label" for="input-medicamento">Nombre del medicamento</label>
     <div class="input-group" id="ac-wrapper">
       <input
@@ -35,32 +35,44 @@
     ></div>
   </div>
 
-  {# Nuevo filtro: Médico #}
-<div class="col-md-6">
-  <label class="form-label" for="medico-select">Médico (opcional)</label>
-  <select
-    name="medico"
-    id="medico-select"
-    class="form-select"
-  >
-    <option value="">Todos</option>
-    {% for m in medicos_disponibles %}
-      <option value="{{ m }}" {% if m == medico %}selected{% endif %}>{{ m }}</option>
-    {% endfor %}
-  </select>
-  <div class="form-text">
-    La lista se llena con los médicos que han prescrito este medicamento en el rango de fechas.
+  <!-- Almacén -->
+  <div class="col-lg-2 col-md-6">
+    <label class="form-label" for="alm-select">Almacén</label>
+    <select name="alm" id="alm-select" class="form-select">
+      {% if almacenes and almacenes|length %}
+        {% for a in almacenes %}
+          <option value="{{ a.id }}" {% if a.id == alm %}selected{% endif %}>
+            {{ a.id }} — {{ a.nombre }}
+          </option>
+        {% endfor %}
+      {% else %}
+        <option value="{{ alm }}" selected>Usando almacén #{{ alm }}</option>
+      {% endif %}
+    </select>
+    {% if not almacenes or not almacenes|length %}
+      <div class="form-text">No se pudo cargar la lista de almacenes desde la BD. Se usará el #{{ alm }}.</div>
+    {% endif %}
   </div>
-</div>
 
+  <!-- Médico -->
+  <div class="col-lg-3 col-md-6">
+    <label class="form-label" for="medico-select">Médico (opcional)</label>
+    <select name="medico" id="medico-select" class="form-select">
+      <option value="">Todos</option>
+      {% for m in medicos_disponibles %}
+        <option value="{{ m }}" {% if m == medico %}selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+    </select>
+    <div class="form-text">Se llena con los médicos que prescribieron en el rango.</div>
+  </div>
 
-
-  <div class="col-md-3">
+  <!-- Fechas -->
+  <div class="col-lg-1 col-md-6">
     <label class="form-label" for="fecha-desde">Desde</label>
     <input type="date" name="desde" id="fecha-desde" class="form-control" value="{{ desde|default:'' }}">
   </div>
 
-  <div class="col-md-3">
+  <div class="col-lg-1 col-md-6">
     <label class="form-label" for="fecha-hasta">Hasta</label>
     <input type="date" name="hasta" id="fecha-hasta" class="form-control" value="{{ hasta|default:'' }}">
   </div>
@@ -72,7 +84,7 @@
   </div>
 </form>
 
-{# ======== Autocomplete ligero (misma API que kardex) ======== #}
+<!-- Autocomplete, misma API que Kardex -->
 <script>
 (function() {
   const $input = document.getElementById('input-medicamento');
@@ -110,7 +122,6 @@
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
         if ($input) {
-          // Si llega "N0501 — Alprazolam", deja solo el nombre
           $input.value = it.label.replace(/^([A-Z0-9]+)\s+—\s+/i, '');
           $input.focus();
         }
@@ -157,12 +168,10 @@
 })();
 </script>
 
-{# ======== Mensajes de validación ======== #}
 {% if error %}
   <div class="alert alert-warning mt-3" role="alert">{{ error }}</div>
 {% endif %}
 
-{# ======== Resultado ======== #}
 {% if encabezado %}
   <div class="row mt-3">
     <div class="col-md-6">
@@ -173,20 +182,14 @@
     <div class="col-md-6">
       <p><strong>Concentración:</strong> {{ encabezado.concentracion }}</p>
       <p><strong>Presentación:</strong> {{ encabezado.presentacion }}</p>
+      <p><strong>Almacén:</strong> #{{ alm }}</p>
     </div>
   </div>
 
-  {# Resumen de totales #}
   <div class="mt-3 d-flex flex-wrap gap-2">
-    <span class="badge text-bg-success">
-      Total prescripciones: {{ total_presc }}
-    </span>
-    <span class="badge text-bg-secondary">
-      Pacientes únicos: {{ pacientes_unicos }}
-    </span>
-    <span class="badge text-bg-secondary">
-      Médicos únicos: {{ medicos_unicos }}
-    </span>
+    <span class="badge text-bg-success">Total prescripciones: {{ total_presc }}</span>
+    <span class="badge text-bg-secondary">Pacientes únicos: {{ pacientes_unicos }}</span>
+    <span class="badge text-bg-secondary">Médicos únicos: {{ medicos_unicos }}</span>
   </div>
 
   {% if rows %}

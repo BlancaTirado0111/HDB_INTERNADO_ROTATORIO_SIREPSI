@@ -5,10 +5,10 @@
 
 <h2 class="mb-3 page-title">Kardex</h2>
 
-<form method="get" class="row g-3 gx-4 align-items-end position-relative kardex-form">
+<form method="get" class="row g-3 gx-4 align-items-end position-relative kardex-form" aria-label="Filtro de Kardex">
 
   <!-- Nombre del medicamento -->
-  <div class="col-lg-6 col-md-12">
+  <div class="col-lg-5 col-md-12">
     <label class="form-label" for="input-medicamento">Nombre del medicamento</label>
     <div class="input-group" id="ac-wrapper">
       <input type="text" name="q" id="input-medicamento"
@@ -26,14 +26,33 @@
     </div>
   </div>
 
+  <!-- Almacén -->
+  <div class="col-lg-2 col-md-6">
+    <label class="form-label" for="alm-select">Almacén</label>
+    <select name="alm" id="alm-select" class="form-select">
+      {% if almacenes and almacenes|length %}
+        {% for a in almacenes %}
+          <option value="{{ a.id }}" {% if a.id == alm %}selected{% endif %}>
+            {{ a.id }} — {{ a.nombre }}
+          </option>
+        {% endfor %}
+      {% else %}
+        <option value="{{ alm }}" selected>Usando almacén #{{ alm }}</option>
+      {% endif %}
+    </select>
+    {% if not almacenes or not almacenes|length %}
+      <div class="form-text">No se pudo cargar la lista de almacenes desde la BD. Se usará el #{{ alm }}.</div>
+    {% endif %}
+  </div>
+
   <!-- Desde -->
-  <div class="col-lg-3 col-md-6">
+  <div class="col-lg-2 col-md-6">
     <label class="form-label" for="f-desde">Desde</label>
     <input type="date" id="f-desde" name="desde" class="form-control" value="{{ desde|default:'' }}">
   </div>
 
   <!-- Hasta -->
-  <div class="col-lg-3 col-md-6">
+  <div class="col-lg-2 col-md-6">
     <label class="form-label" for="f-hasta">Hasta</label>
     <input type="date" id="f-hasta" name="hasta" class="form-control" value="{{ hasta|default:'' }}">
   </div>
@@ -50,13 +69,12 @@
       </button>
 
       <a class="btn btn-outline-secondary"
-   href="{% url 'kardex_export_pdf' %}?q={{ q|urlencode }}&desde={{ desde }}&hasta={{ hasta }}">
-  <i class="bi bi-filetype-pdf me-1"></i> Exportar PDF
-</a>
-
+         href="{% url 'kardex_export_pdf' %}?q={{ q|urlencode }}&desde={{ desde }}&hasta={{ hasta }}&alm={{ alm }}">
+        <i class="bi bi-filetype-pdf me-1"></i> Exportar PDF
+      </a>
 
       <a class="btn btn-outline-secondary"
-         href="{% url 'kardex_export_xlsx' %}?q={{ q|urlencode }}&desde={{ desde }}&hasta={{ hasta }}">
+         href="{% url 'kardex_export_xlsx' %}?q={{ q|urlencode }}&desde={{ desde }}&hasta={{ hasta }}&alm={{ alm }}">
         <i class="bi bi-file-earmark-excel me-1"></i> Exportar XLSX
       </a>
     {% endif %}
@@ -141,9 +159,8 @@
 {% endif %}
 
 {% if encabezado %}
-  <!-- Activamos modo "comfy" para dar más aire -->
   <div class="print-area is-comfy reveal">
-    <!-- Cabecera al estilo físico -->
+    <!-- Cabecera tipo formulario -->
     <div class="row g-3">
       <div class="col-md-6">
         <p class="mb-1"><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
@@ -153,13 +170,15 @@
       <div class="col-md-6">
         <p class="mb-1"><strong>Concentración:</strong> {{ encabezado.concentracion }}</p>
         <p class="mb-1"><strong>Presentación:</strong> {{ encabezado.presentacion }}</p>
-        {% if desde and hasta %}<p class="mb-1"><strong>Rango:</strong> {{ desde }} a {{ hasta }}</p>{% endif %}
+        {% if desde and hasta %}
+          <p class="mb-1"><strong>Rango:</strong> {{ desde }} a {{ hasta }}</p>
+        {% endif %}
+        <p class="mb-1"><strong>Almacén:</strong> #{{ alm }}</p>
       </div>
     </div>
 
     {% if rows %}
       <div class="table-responsive mt-3">
-        <!-- Quitamos table-sm y activamos sticky de primera columna -->
         <table class="table align-middle table--sticky-col">
           <thead class="table-light">
             <tr>

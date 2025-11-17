@@ -38,6 +38,7 @@ try:
     import openpyxl
     from openpyxl.styles import Font, Border, Side, Alignment
     from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.properties import PageSetupProperties
 
     HAS_OPENPYXL = True
 except Exception:
@@ -54,38 +55,81 @@ from .dbutils import (
 #                   HOME / UTILES
 # ============================================================
 
+DEFAULT_ALMACEN: int = 31  # fallback
+
+def listar_almacenes() -> List[Dict[str, Any]]:
+    """
+    Devuelve [{'id': 31, 'nombre': 'ALMACEN ...'}, ...]
+    Prueba fa_almacen e in_almacen con variantes comunes de nombres de columna.
+    """
+    probes = [
+        ("dbo.fa_almacen", ("ALM_CODIGO", "ALM_DESCRIPCION")),
+        ("dbo.fa_almacen", ("Alm_Codigo", "Alm_Nombre")),
+        ("dbo.in_almacen", ("ALM_CODIGO", "ALM_DESCRIPCION")),
+        ("dbo.in_almacen", ("Alm_Codigo", "Alm_Nombre")),
+    ]
+    for tabla, (col_id, col_nom) in probes:
+        try:
+            rows = query_bdfarmacia(
+                f"""
+                SELECT CAST({col_id} AS INT)  AS id,
+                       RTRIM(ISNULL({col_nom},'')) AS nombre
+                FROM {tabla}
+                ORDER BY {col_id}
+                """,
+                None,
+            )
+            if rows:
+                return rows
+        except Exception:
+            continue
+    return []
+
+
+def _resolver_almacen(get_dict, almacenes: List[Dict[str, Any]]) -> Tuple[int, str, bool]:
+    """
+    Resuelve el almacén desde GET['alm'].
+    Devuelve: (alm_int, mensaje_corto, lista_ok)
+    """
+    alm_s = (get_dict.get("alm") or "").strip()
+    try:
+        alm_int = int(alm_s) if alm_s else None
+    except Exception:
+        alm_int = None
+
+    lista_ok = bool(almacenes)
+    if alm_int is None:
+        # Si hay lista, intenta usar DEFAULT si existe; si no, el primero
+        if lista_ok:
+            ids = {a["id"] for a in almacenes}
+            alm_int = DEFAULT_ALMACEN if DEFAULT_ALMACEN in ids else almacenes[0]["id"]
+        else:
+            alm_int = DEFAULT_ALMACEN
+
+    msg = f"Usando almacén #{alm_int}"
+    return alm_int, msg, lista_ok
+
 
 def home(request):
-    """Vista de inicio del sistema."""
     return render(request, "home.html")
 
 
 def ping(request):
-    """Health-check sencillo para supervisión básica."""
     return render(request, "base.html", {"content": "pong"})
 
 
 def _page_window(page_obj, window: int = 2) -> List[Optional[int]]:
-    """
-    Devuelve una lista con números de página y None donde van los '…'.
-    Ej.: [1, None, 8, 9, 10, 11, 12, None, 50]
-    """
     current = page_obj.number
     total = page_obj.paginator.num_pages
-
     pages = {1, total}
-
     for p in range(current - window, current + window + 1):
         if 1 <= p <= total:
             pages.add(p)
-
     for p in range(2, min(2 + window, total)):
         pages.add(p)
     for p in range(max(total - window + 1, 1), total):
         pages.add(p)
-
     pages = sorted(pages)
-
     compact: List[Optional[int]] = []
     prev: Optional[int] = None
     for p in pages:
@@ -100,7 +144,6 @@ def _page_window(page_obj, window: int = 2) -> List[Optional[int]]:
 #                   MOVIMIENTOS: LISTA DE MEDS
 # ============================================================
 
-# Catálogo central de psicotrópicos utilizado en TODAS las vistas
 PSYCH_LIST: List[Tuple[str, str]] = [
     ("N0501", "Alprazolam"),
     ("N0306", "Clonazepam"),
@@ -118,7 +161,6 @@ PSYCH_LIST: List[Tuple[str, str]] = [
     ("N0116", "Remifentanilo"),
 ]
 
-# (No se usan por ahora, pero quedan por si reactivas el filtro por tipo)
 MED_TYPES_CHOICES = [
     ("benzo", "Benzodiacepinas"),
     ("barbiturico", "Barbitúricos"),
@@ -131,34 +173,23 @@ MED_TYPES_CODES = {
     "opioide": {"N0105", "N0106", "N0206", "N0207", "N0116"},
 }
 
-DEFAULT_ALMACEN: int = 31
-
 
 def _psych_codes_sql_list() -> str:
-    """Crea la lista 'IN ('N0501','N0306',...)' segura desde PSYCH_LIST."""
     codes = [c for c, _ in PSYCH_LIST]
     return ", ".join(f"'{c}'" for c in codes)
 
 
 def medicamentos(request):
     """
-    Lista paginada (40 por página) de medicamentos psicotrópicos
-    con filtros por texto, laboratorio, presentación y orden dinámico.
-    GET:
-      - q     : texto libre (nombre, DCI, código, codificación)
-      - lab   : nombre exacto de laboratorio
-      - pres  : presentación exacta
-      - order : nombre | codigo | codificacion | lab
+    Lista paginada (40 por página) con filtros por texto, laboratorio y presentación.
     """
     q = (request.GET.get("q") or "").strip()
     lab = (request.GET.get("lab") or "").strip()
     pres = (request.GET.get("pres") or "").strip()
     order = (request.GET.get("order") or "nombre").lower()
 
-    # 1) WHERE base: solo psicotrópicos definidos en PSYCH_LIST
     base_where = f"m.MED_CODIFICACION IN ({_psych_codes_sql_list()})"
 
-    # 2) Valores únicos para combos (laboratorio/presentación)
     sql_choices = f"""
         SELECT DISTINCT
             RTRIM(ISNULL(p.PRO_NOMBRE,''))  AS laboratorio,
@@ -170,22 +201,15 @@ def medicamentos(request):
     """
     choice_rows = query_bdfarmacia(sql_choices, None)
 
-    laboratorios = sorted(
-        {
-            (row.get("laboratorio") or "").strip()
-            for row in choice_rows
-            if (row.get("laboratorio") or "").strip()
-        }
-    )
-    presentaciones = sorted(
-        {
-            (row.get("presentacion") or "").strip()
-            for row in choice_rows
-            if (row.get("presentacion") or "").strip()
-        }
-    )
+    laboratorios = sorted({
+        (row.get("laboratorio") or "").strip()
+        for row in choice_rows if (row.get("laboratorio") or "").strip()
+    })
+    presentaciones = sorted({
+        (row.get("presentacion") or "").strip()
+        for row in choice_rows if (row.get("presentacion") or "").strip()
+    })
 
-    # 3) Consulta principal con filtros dinámicos
     sql = f"""
         SELECT
             m.MED_CODIGO         AS codigo,
@@ -204,7 +228,6 @@ def medicamentos(request):
     where_clauses: List[str] = []
     params: List[Any] = []
 
-    # 3.1 Texto libre
     if q:
         like = f"%{q}%"
         where_clauses.append(
@@ -216,51 +239,37 @@ def medicamentos(request):
             ")"
         )
         params.extend([like, like, like, like])
-
-    # 3.2 Laboratorio
     if lab:
         where_clauses.append("p.PRO_NOMBRE = %s")
         params.append(lab)
-
-    # 3.3 Presentación
     if pres:
         where_clauses.append("m.med_unidad = %s")
         params.append(pres)
-
     if where_clauses:
         sql += " AND " + " AND ".join(where_clauses)
 
-    # 4) Orden dinámico
     order_map: Dict[str, List[str]] = {
         "nombre": ["m.MED_COMERCIAL", "m.med_generico"],
         "codigo": ["m.MED_CODIGO"],
         "codificacion": ["m.MED_CODIFICACION", "m.MED_COMERCIAL"],
         "lab": ["p.PRO_NOMBRE", "m.MED_COMERCIAL"],
     }
-    order_parts = order_map.get(order, order_map["nombre"])
-    order_parts = order_parts + ["m.MED_CODIGO"]  # orden estable
-
-    seen: set[str] = set()
-    unique_order_parts: List[str] = []
+    order_parts = order_map.get(order, order_map["nombre"]) + ["m.MED_CODIGO"]
+    seen, unique_order_parts = set(), []
     for part in order_parts:
         if part not in seen:
             unique_order_parts.append(part)
             seen.add(part)
-
     sql += " ORDER BY " + ", ".join(unique_order_parts)
 
-    # 5) Ejecutar y paginar
     filas = query_bdfarmacia(sql, params or None)
-
     paginator = Paginator(filas, 40)
-    page_number = request.GET.get("page")
-    page_obj = paginator.get_page(page_number)
+    page_obj = paginator.get_page(request.GET.get("page"))
 
     no_results_message = ""
     if (q or lab or pres) and paginator.count == 0:
         no_results_message = "No hay existencias para esta combinación de filtros."
 
-    # 6) Querystring para mantener filtros en la paginación
     qs_params: Dict[str, str] = {}
     if q:
         qs_params["q"] = q
@@ -292,27 +301,18 @@ def medicamentos(request):
 #                   MOVIMIENTOS (KARDEX)
 # ============================================================
 
-
 def meds_suggest(request):
-    """Autocomplete para medicamentos (kardex/prescripciones)."""
     q = (request.GET.get("q") or "").strip().lower()
     results: List[Dict[str, str]] = []
-
     for code, name in PSYCH_LIST:
         if not q or (q in code.lower()) or (q in name.lower()):
             results.append({"code": code, "label": f"{code} — {name}"})
         if len(results) >= 20:
             break
-
     return JsonResponse({"results": results})
 
 
 def _resolve_med_by_name_or_code(name_or_code: str) -> Optional[Dict[str, Any]]:
-    """
-    Resuelve un medicamento a partir de nombre o código.
-    Retorna dict con:
-      med_codigo, codificacion, nombre, dci, concentracion, presentacion, laboratorio
-    """
     q = (name_or_code or "").strip()
     if not q:
         return None
@@ -324,7 +324,8 @@ def _resolve_med_by_name_or_code(name_or_code: str) -> Optional[Dict[str, Any]]:
             break
 
     if pick_code:
-        sql = """
+        rows = query_bdfarmacia(
+            """
             SELECT TOP(1)
               m.MED_CODIGO         AS med_codigo,
               m.MED_CODIFICACION   AS codificacion,
@@ -336,12 +337,14 @@ def _resolve_med_by_name_or_code(name_or_code: str) -> Optional[Dict[str, Any]]:
             FROM dbo.fa_medicamento m
             LEFT JOIN dbo.fa_proveedor p ON p.Emp_Codigo = m.emp_codigo
             WHERE m.MED_CODIFICACION = %s
-        """
-        rows = query_bdfarmacia(sql, [pick_code])
+            """,
+            [pick_code],
+        )
         if rows:
             return rows[0]
 
-    sql = """
+    rows = query_bdfarmacia(
+        """
         SELECT TOP(1)
           m.MED_CODIGO         AS med_codigo,
           m.MED_CODIFICACION   AS codificacion,
@@ -355,26 +358,31 @@ def _resolve_med_by_name_or_code(name_or_code: str) -> Optional[Dict[str, Any]]:
         WHERE     m.MED_COMERCIAL LIKE %s
             OR    m.MED_GENERICO  LIKE %s
         ORDER BY LEN(m.MED_COMERCIAL), m.MED_COMERCIAL
-    """
-    rows = query_bdfarmacia(sql, [f"%{q}%", f"%{q}%"])
+        """,
+        [f"%{q}%", f"%{q}%"],
+    )
     return rows[0] if rows else None
 
 
 def movimientos_kardex(request):
     """
-    Vista Kardex: movimientos por medicamento y rango de fechas.
-    Orden de columnas (igual que el formato físico):
-    FECHA | CANTIDAD INGRESO | CANTIDAD EGRESO | SALDO ANTERIOR | SALDO ACTUAL |
-    N° RECETA | NOMBRE DEL PACIENTE | NOMBRE MÉDICO | N° DE FACTURA | OBSERVACIONES
+    Vista Kardex con filtro de ALMACÉN.
     """
     q = (request.GET.get("q") or "").strip()
     desde = (request.GET.get("desde") or "").strip()
     hasta = (request.GET.get("hasta") or "").strip()
 
-    ctx: Dict[str, Any] = {
+    almacenes = listar_almacenes()
+    alm_int, alm_msg, alm_lista_ok = _resolver_almacen(request.GET, almacenes)
+
+    ctx = {
         "q": q,
         "desde": desde,
         "hasta": hasta,
+        "alm": alm_int,
+        "almacenes": almacenes,
+        "alm_msg": alm_msg,          # Mensaje corto
+        "alm_lista_ok": alm_lista_ok,  # True si el <select> puede poblarse
         "encabezado": None,
         "rows": [],
         "error": "",
@@ -385,11 +393,9 @@ def movimientos_kardex(request):
         "total_movs": 0,
     }
 
-    # Pantalla vacía sin filtros
     if not (q or desde or hasta):
         return render(request, "movimientos/kardex.html", ctx)
 
-    # Validaciones
     if len(q) < 3:
         ctx["error"] = "Escribe al menos 3 letras del nombre del medicamento."
         return render(request, "movimientos/kardex.html", ctx)
@@ -405,23 +411,18 @@ def movimientos_kardex(request):
         ctx["error"] = "La fecha hasta debe ser mayor o igual a la fecha desde."
         return render(request, "movimientos/kardex.html", ctx)
 
-    # Resolver medicamento
     med = _resolve_med_by_name_or_code(q)
     if not med:
         ctx["error"] = "No se encontró un medicamento con ese nombre."
         return render(request, "movimientos/kardex.html", ctx)
 
-    # Cachear dataset
-    cache_key = (
-        f"kardex:{DEFAULT_ALMACEN}:{med['med_codigo']}:"
-        f"{d_desde.isoformat()}:{d_hasta.isoformat()}"
-    )
+    cache_key = f"kardex:{alm_int}:{med['med_codigo']}:{d_desde.isoformat()}:{d_hasta.isoformat()}"
     data = cache.get(cache_key)
     if data is None:
         enc = kardex_encabezado(med["med_codigo"])
         rows = kardex_detalle(
             med_codigo=med["med_codigo"],
-            almacen=DEFAULT_ALMACEN,
+            almacen=alm_int,
             fecha_desde=d_desde,
             fecha_hasta=d_hasta,
         )
@@ -429,7 +430,6 @@ def movimientos_kardex(request):
     else:
         enc, rows = data
 
-    # Totales
     sum_ing = sum(float(r.get("cantidad_ingreso") or 0) for r in rows)
     sum_egr = sum(float(r.get("cantidad_egreso") or 0) for r in rows)
     saldo_ini = float(rows[0]["saldo_anterior"]) if rows else 0.0
@@ -437,15 +437,13 @@ def movimientos_kardex(request):
 
     ctx.update(
         {
-            "q": enc["nombre_del_producto"] if enc else med["nombre"],
+            "q": (enc["nombre_del_producto"] if enc else med["nombre"]),
             "encabezado": {
-                "nombre": enc["nombre_del_producto"] if enc else med["nombre"],
-                "dci": enc["dci"] if enc else med["dci"],
-                "concentracion": enc["concentracion"]
-                if enc
-                else med["concentracion"],
-                "presentacion": enc["presentacion"] if enc else med["presentacion"],
-                "laboratorio": enc["laboratorio"] if enc else None,
+                "nombre": enc.get("nombre_del_producto", med["nombre"]) if enc else med["nombre"],
+                "dci": enc.get("dci", med["dci"]) if enc else med["dci"],
+                "concentracion": enc.get("concentracion", med["concentracion"]) if enc else med["concentracion"],
+                "presentacion": enc.get("presentacion", med["presentacion"]) if enc else med["presentacion"],
+                "laboratorio": enc.get("laboratorio") if enc else None,
             },
             "rows": rows,
             "saldo_inicial": saldo_ini,
@@ -462,22 +460,27 @@ def movimientos_kardex(request):
 #                   PRESCRIPCIONES
 # ============================================================
 
-
 def prescripciones(request):
     """
-    Lista de prescripciones por medicamento y rango de fechas.
-    Filtro opcional por nombre de médico (desde combo).
+    Lista de prescripciones por medicamento y rango de fechas, con filtro de ALMACÉN.
     """
     q = (request.GET.get("q") or "").strip()
     medico = (request.GET.get("medico") or "").strip()
     desde = (request.GET.get("desde") or "").strip()
     hasta = (request.GET.get("hasta") or "").strip()
 
-    ctx: Dict[str, Any] = {
+    almacenes = listar_almacenes()
+    alm_int, alm_msg, alm_lista_ok = _resolver_almacen(request.GET, almacenes)
+
+    ctx = {
         "q": q,
         "medico": medico,
         "desde": desde,
         "hasta": hasta,
+        "alm": alm_int,
+        "almacenes": almacenes,
+        "alm_msg": alm_msg,
+        "alm_lista_ok": alm_lista_ok,
         "encabezado": None,
         "rows": [],
         "error": "",
@@ -487,7 +490,6 @@ def prescripciones(request):
         "medicos_disponibles": [],
     }
 
-    # Pantalla vacía
     if not (q or desde or hasta):
         return render(request, "prescripciones/lista.html", ctx)
 
@@ -495,7 +497,6 @@ def prescripciones(request):
         ctx["error"] = "Escribe al menos 3 letras del nombre del medicamento."
         return render(request, "prescripciones/lista.html", ctx)
 
-    # Fechas
     try:
         d_desde = datetime.strptime(desde, "%Y-%m-%d").date()
         d_hasta = datetime.strptime(hasta, "%Y-%m-%d").date()
@@ -503,36 +504,26 @@ def prescripciones(request):
         ctx["error"] = "Fechas inválidas. Usa el selector de fechas."
         return render(request, "prescripciones/lista.html", ctx)
 
+    if (d_hasta - d_desde).days > 31:
+        ctx["error"] = "Por ahora el reporte de prescripciones permite rangos de hasta 31 días."
+        return render(request, "prescripciones/lista.html", ctx)
+
     if d_hasta < d_desde:
         ctx["error"] = "La fecha hasta debe ser mayor o igual a la fecha desde."
         return render(request, "prescripciones/lista.html", ctx)
 
-    # Limitar rango (ejemplo: 31 días)
-    delta_dias = (d_hasta - d_desde).days
-    if delta_dias > 31:
-        ctx["error"] = (
-            "Por ahora el reporte de prescripciones solo permite rangos "
-            "de hasta 31 días. Reduce el rango."
-        )
-        return render(request, "prescripciones/lista.html", ctx)
-
-    # Resolver medicamento
     med = _resolve_med_by_name_or_code(q)
     if not med:
         ctx["error"] = "No se encontró un medicamento con ese nombre."
         return render(request, "prescripciones/lista.html", ctx)
 
-    # Caché (dataset sin filtro por médico)
-    cache_key = (
-        f"presc:{DEFAULT_ALMACEN}:{med['med_codigo']}:"
-        f"{d_desde.isoformat()}:{d_hasta.isoformat()}"
-    )
+    cache_key = f"presc:{alm_int}:{med['med_codigo']}:{d_desde.isoformat()}:{d_hasta.isoformat()}"
     data = cache.get(cache_key)
     if data is None:
         enc = kardex_encabezado(med["med_codigo"])
         rows = prescripciones_detalle(
             med_codigo=med["med_codigo"],
-            almacen=DEFAULT_ALMACEN,
+            almacen=alm_int,
             fecha_desde=d_desde,
             fecha_hasta=d_hasta,
         )
@@ -540,7 +531,6 @@ def prescripciones(request):
     else:
         enc, rows = data
 
-    # Médicos disponibles para combo
     medicos_disponibles = sorted(
         {
             (r.get("nombre_medico") or "").strip()
@@ -549,7 +539,6 @@ def prescripciones(request):
         }
     )
 
-    # Filtro por médico (exacto, case-insensitive)
     rows_filtradas = rows
     if medico:
         m_ref = medico.strip().lower()
@@ -559,7 +548,6 @@ def prescripciones(request):
             if (r.get("nombre_medico") or "").strip().lower() == m_ref
         ]
 
-    # Métricas
     total = len(rows_filtradas)
     pacientes = len(
         {
@@ -579,15 +567,12 @@ def prescripciones(request):
     ctx.update(
         {
             "q": enc["nombre_del_producto"] if enc else med["nombre"],
-            "medico": medico,
             "encabezado": {
-                "nombre": enc["nombre_del_producto"] if enc else med["nombre"],
-                "dci": enc["dci"] if enc else med["dci"],
-                "concentracion": enc["concentracion"]
-                if enc
-                else med["concentracion"],
-                "presentacion": enc["presentacion"] if enc else med["presentacion"],
-                "laboratorio": enc["laboratorio"] if enc else None,
+                "nombre": enc.get("nombre_del_producto", med["nombre"]) if enc else med["nombre"],
+                "dci": enc.get("dci", med["dci"]) if enc else med["dci"],
+                "concentracion": enc.get("concentracion", med["concentracion"]) if enc else med["concentracion"],
+                "presentacion": enc.get("presentacion", med["presentacion"]) if enc else med["presentacion"],
+                "laboratorio": enc.get("laboratorio") if enc else None,
             },
             "rows": rows_filtradas,
             "total_presc": total,
@@ -603,9 +588,7 @@ def prescripciones(request):
 #                   EXPORTS (CSV / XLSX / PDF)
 # ============================================================
 
-
 def _safe_filename(base: str) -> str:
-    """Limpia un nombre para Content-Disposition."""
     base = (base or "reporte").strip()
     base = re.sub(r"[^\w\-.]+", "_", base, flags=re.UNICODE)
     return base or "reporte"
@@ -613,16 +596,16 @@ def _safe_filename(base: str) -> str:
 
 def _resolver_kardex_dataset(request):
     """
-    Reusa la misma lógica de la vista para armar el dataset para export.
-    GET esperados:
-      - q (str): nombre/código de medicamento (obligatorio)
-      - desde, hasta (YYYY-MM-DD)
-      - alm (int, opcional): almacén. Si falta, usa DEFAULT_ALMACEN
+    Arma el dataset para exportar, respetando el almacén.
+    GET: q, desde, hasta, alm
+
+    Devuelve:
+      enc, rows, d_desde, d_hasta, alm_int, med
     """
     q = (request.GET.get("q") or "").strip()
     desde = (request.GET.get("desde") or "").strip()
     hasta = (request.GET.get("hasta") or "").strip()
-    alm = request.GET.get("alm")
+    alm_raw = (request.GET.get("alm") or "").strip()
 
     if not q:
         raise ValueError("Falta el nombre del medicamento.")
@@ -637,7 +620,7 @@ def _resolver_kardex_dataset(request):
         raise ValueError("No se encontró el medicamento.")
 
     try:
-        alm_int = int(alm) if alm not in (None, "", "null") else DEFAULT_ALMACEN
+        alm_int = int(alm_raw) if alm_raw else DEFAULT_ALMACEN
     except Exception:
         alm_int = DEFAULT_ALMACEN
 
@@ -648,31 +631,38 @@ def _resolver_kardex_dataset(request):
         fecha_desde=d_desde,
         fecha_hasta=d_hasta,
     )
-    return enc, rows, d_desde, d_hasta, alm_int
+    return enc, rows, d_desde, d_hasta, alm_int, med
+
+
+def _build_med_label(enc: Dict[str, Any], med: Dict[str, Any]) -> str:
+    """
+    Construye 'ALPRAZOLAM_N0501' usando nombre + codificación.
+    """
+    med_name = enc.get("nombre_del_producto") or med.get("nombre") or "medicamento"
+    med_codif = enc.get("codificacion") or med.get("codificacion") or ""
+    if med_codif:
+        label = f"{med_name}_{med_codif}"
+    else:
+        label = med_name
+    return _safe_filename(label)
 
 
 def export_kardex_csv(request):
-    """Exporta el Kardex a CSV (UTF-8 BOM + CRLF) en el MISMO orden que la tabla."""
     try:
-        enc, rows, d_desde, d_hasta, alm = _resolver_kardex_dataset(request)
+        enc, rows, d_desde, d_hasta, alm, med = _resolver_kardex_dataset(request)
     except Exception as e:
         return HttpResponse(
-            f"Error: {e}",
-            status=400,
-            content_type="text/plain; charset=utf-8",
+            f"Error: {e}", status=400, content_type="text/plain; charset=utf-8"
         )
 
-    base = _safe_filename(enc.get("nombre_del_producto", "medicamento"))
-    filename = f"Kardex_{base}{d_desde}{d_hasta}.csv"
+    base = _build_med_label(enc, med)
+    filename = f"KARDEX_{base}_DEL_{d_desde}_AL_{d_hasta}.csv"
 
     resp = HttpResponse(content_type="text/csv; charset=utf-8")
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
-
-    # BOM
-    resp.write("\ufeff")
+    resp.write("\ufeff")  # BOM
     w = csv.writer(resp, lineterminator="\r\n")
 
-    # Cabecera informativa
     w.writerow(["KARDEX"])
     w.writerow([f"Producto: {enc.get('nombre_del_producto','')}"])
     w.writerow([f"DCI: {enc.get('dci','')}"])
@@ -680,9 +670,9 @@ def export_kardex_csv(request):
     w.writerow([f"Presentación: {enc.get('presentacion','')}"])
     w.writerow([f"Laboratorio: {enc.get('laboratorio','')}"])
     w.writerow([f"Rango: {d_desde} a {d_hasta}"])
+    w.writerow([f"Almacén: #{alm}"])
     w.writerow([])
 
-    # Encabezados (formato físico)
     headers = [
         "Fecha",
         "Cantidad Ingreso",
@@ -719,13 +709,6 @@ def export_kardex_csv(request):
 
 
 def export_kardex_xlsx(request):
-    """
-    Exporta el Kardex a XLSX con formato tipo formulario:
-    - Bloque superior con datos del medicamento.
-    - Tabla con bordes finos en todas las celdas.
-    - Encabezados en negrita y centrados.
-    - Números alineados a la derecha, fechas dd/mm/aaaa.
-    """
     if not HAS_OPENPYXL:
         return HttpResponse(
             "Falta dependencia: openpyxl. Instala con: pip install openpyxl",
@@ -734,16 +717,14 @@ def export_kardex_xlsx(request):
         )
 
     try:
-        enc, rows, d_desde, d_hasta, alm = _resolver_kardex_dataset(request)
+        enc, rows, d_desde, d_hasta, alm, med = _resolver_kardex_dataset(request)
     except Exception as e:
         return HttpResponse(
-            f"Error: {e}",
-            status=400,
-            content_type="text/plain; charset=utf-8",
+            f"Error: {e}", status=400, content_type="text/plain; charset=utf-8"
         )
 
-    base = _safe_filename(enc.get("nombre_del_producto", "medicamento"))
-    filename = f"Kardex_{base}{d_desde}{d_hasta}.xlsx"
+    base = _build_med_label(enc, med)
+    filename = f"KARDEX_{base}_DEL_{d_desde}_AL_{d_hasta}.xlsx"
 
     headers = [
         "Fecha",
@@ -762,10 +743,11 @@ def export_kardex_xlsx(request):
     ws = wb.active
     ws.title = "Kardex"
 
-    # ----- Bloque superior -----
+    # Título
     ws["A1"] = "KARDEX"
     ws["A1"].font = Font(bold=True, size=14)
 
+    # Metadatos
     meta = [
         f"Producto: {enc.get('nombre_del_producto', '')}",
         f"DCI: {enc.get('dci', '')}",
@@ -773,33 +755,35 @@ def export_kardex_xlsx(request):
         f"Presentación: {enc.get('presentacion', '')}",
         f"Laboratorio: {enc.get('laboratorio', '')}",
         f"Rango: {d_desde} a {d_hasta}",
+        f"Almacén: #{alm}",
     ]
-
     row_idx = 2
     for line in meta:
         ws.cell(row=row_idx, column=1, value=line)
         row_idx += 1
+    row_idx += 1  # blanco
 
-    # Línea en blanco
-    row_idx += 1
-
-    # ----- Encabezados de la tabla -----
+    # Encabezados de tabla
     header_row = row_idx
     for col_idx, title in enumerate(headers, start=1):
         cell = ws.cell(row=header_row, column=col_idx, value=title)
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    # Helper para convertir fecha 'YYYY-MM-DD' a fecha Excel
     def _coerce_excel_date(val):
-        if isinstance(val, str) and len(val) == 10 and val[4] == "-" and val[7] == "-":
+        if (
+            isinstance(val, str)
+            and len(val) == 10
+            and val[4] == "-"
+            and val[7] == "-"
+        ):
             try:
                 return datetime.strptime(val, "%Y-%m-%d").date()
             except Exception:
                 return val
         return val
 
-    # ----- Filas de datos -----
+    # Filas de datos
     for r in rows:
         row_idx += 1
         values = [
@@ -819,10 +803,8 @@ def export_kardex_xlsx(request):
         for col_idx, value in enumerate(values, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)
 
-    # ----- Formato: bordes, alineación, anchos -----
+    # Bordes
     thin = Side(border_style="thin", color="000000")
-
-    # Bordes en toda la tabla
     for row in ws.iter_rows(
         min_row=header_row,
         max_row=ws.max_row,
@@ -832,7 +814,7 @@ def export_kardex_xlsx(request):
         for cell in row:
             cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
 
-    # Alineación y formato columnas
+    # Formato de columnas
     for row in ws.iter_rows(
         min_row=header_row + 1,
         max_row=ws.max_row,
@@ -841,31 +823,56 @@ def export_kardex_xlsx(request):
     ):
         for cell in row:
             col = cell.column
-            if col == 1:  # Fecha
+            if col == 1:
                 cell.number_format = "DD/MM/YYYY"
                 cell.alignment = Alignment(horizontal="center")
-            elif col in (2, 3, 4, 5):  # numéricas
+            elif col in (2, 3, 4, 5):
                 cell.number_format = "0.00"
                 cell.alignment = Alignment(horizontal="right")
-            elif col in (7, 8, 10):  # campos largos: paciente, médico, observaciones
+            elif col in (7, 8, 10):
                 cell.alignment = Alignment(horizontal="left", wrap_text=True)
             else:
                 cell.alignment = Alignment(horizontal="left")
 
-    widths = [12, 16, 16, 16, 16, 14, 28, 28, 14, 36]
+    # Ancho de columnas (ligeramente ajustado)
+    widths = [12, 14, 14, 14, 14, 14, 26, 26, 14, 30]
     for col_idx, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
+    # Congelar encabezado
     ws.freeze_panes = ws[f"A{header_row + 1}"]
+
+    # ================== CONFIGURACIÓN DE IMPRESIÓN ==================
+    # Orientación horizontal
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    # Ajustar a 1 página de ancho (alto libre)
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+
+    # Márgenes (en pulgadas)
+    ws.page_margins.left = 0.5
+    ws.page_margins.right = 0.5
+    ws.page_margins.top = 0.75
+    ws.page_margins.bottom = 0.75
+
+    # Repetir fila de encabezado de la tabla en cada página
+    ws.print_title_rows = f"{header_row}:{header_row}"
+
+    # Área de impresión: desde A1 hasta la última fila y última columna
+    last_col_letter = get_column_letter(len(headers))
+    last_row = ws.max_row
+    ws.print_area = f"A1:{last_col_letter}{last_row}"
+    # ================================================================
 
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-
     resp = HttpResponse(
         bio.getvalue(),
         content_type=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
         ),
     )
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
@@ -873,7 +880,6 @@ def export_kardex_xlsx(request):
 
 
 def export_kardex_pdf(request):
-    """Exporta el Kardex a PDF usando ReportLab (paisaje A4)."""
     if not HAS_REPORTLAB:
         return HttpResponse(
             "Falta dependencia: reportlab. Instala con: pip install reportlab",
@@ -882,16 +888,14 @@ def export_kardex_pdf(request):
         )
 
     try:
-        enc, rows, d_desde, d_hasta, alm = _resolver_kardex_dataset(request)
+        enc, rows, d_desde, d_hasta, alm, med = _resolver_kardex_dataset(request)
     except Exception as e:
         return HttpResponse(
-            f"Error: {e}",
-            status=400,
-            content_type="text/plain; charset=utf-8",
+            f"Error: {e}", status=400, content_type="text/plain; charset=utf-8"
         )
 
-    base = _safe_filename(enc.get("nombre_del_producto", "medicamento"))
-    filename = f"Kardex_{base}{d_desde}{d_hasta}.pdf"
+    base = _build_med_label(enc, med)
+    filename = f"KARDEX_{base}_DEL_{d_desde}_AL_{d_hasta}.pdf"
 
     bio = BytesIO()
     doc = SimpleDocTemplate(
@@ -902,17 +906,17 @@ def export_kardex_pdf(request):
         topMargin=18,
         bottomMargin=18,
     )
-
     styles = getSampleStyleSheet()
     story = []
     story.append(Paragraph("<b>KARDEX</b>", styles["Title"]))
     meta_text = (
-        f"Producto: {enc.get('nombre_del_producto','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"DCI: {enc.get('dci','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"Concentración: {enc.get('concentracion','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"Presentación: {enc.get('presentacion','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"Laboratorio: {enc.get('laboratorio','')} &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"Rango: {d_desde} a {d_hasta}"
+        f"Producto: {enc.get('nombre_del_producto','')} &nbsp;|&nbsp; "
+        f"DCI: {enc.get('dci','')} &nbsp;|&nbsp; "
+        f"Concentración: {enc.get('concentracion','')} &nbsp;|&nbsp; "
+        f"Presentación: {enc.get('presentacion','')} &nbsp;|&nbsp; "
+        f"Laboratorio: {enc.get('laboratorio','')} &nbsp;|&nbsp; "
+        f"Rango: {d_desde} a {d_hasta} &nbsp;|&nbsp; "
+        f"Almacén: #{alm}"
     )
     story.append(Paragraph(meta_text, styles["Normal"]))
     story.append(Spacer(1, 8))
@@ -960,7 +964,6 @@ def export_kardex_pdf(request):
         3.0 * cm,
         7.0 * cm,
     ]
-
     tbl = Table(data, colWidths=col_widths, repeatRows=1)
     tbl.setStyle(
         TableStyle(
@@ -988,4 +991,3 @@ def export_kardex_pdf(request):
     resp = HttpResponse(bio.getvalue(), content_type="application/pdf")
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
-
