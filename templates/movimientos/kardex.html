@@ -41,7 +41,7 @@
       {% endif %}
     </select>
     {% if not almacenes or not almacenes|length %}
-      <div class="form-text">No se pudo cargar la lista de almacenes desde la BD. Se usará el #{{ alm }}.</div>
+      <div class="form-text">Usando almacén #{{ alm }}.</div>
     {% endif %}
   </div>
 
@@ -86,23 +86,25 @@
 (function() {
   const $input = document.getElementById('input-medicamento');
   const $list  = document.getElementById('ac-list');
+  const $wrap  = document.getElementById('ac-wrapper');
+  const $open  = document.getElementById('btn-open-list');
   let lastQuery = '';
   let controller = null;
 
-  function hideList() { $list.style.display = 'none'; }
-  function showList() { $list.style.display = 'block'; }
+  function hideList() { if ($list) $list.style.display = 'none'; }
+  function showList() { if ($list) $list.style.display = 'block'; }
 
   function render(items) {
-    if (!items.length) { hideList(); return; }
+    if (!items || !items.length) { hideList(); return; }
     $list.innerHTML = '';
     items.forEach(it => {
       const a = document.createElement('a');
       a.href = '#';
       a.className = 'list-group-item list-group-item-action';
-      a.textContent = it.label;
+      a.textContent = it.label;               // ← mantiene "N#### — Nombre"
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
-        $input.value = it.label.replace(/^([A-Z0-9]+)\s+—\s+/i, '');
+        $input.value = it.label;              // ← NO se quita el código
         hideList();
       });
       $list.appendChild(a);
@@ -118,28 +120,35 @@
       const res = await fetch(url, {signal: controller.signal});
       if (!res.ok) return render([]);
       const data = await res.json();
-      render(data.results || []);
-    } catch(e) {
-      render([]);
-    }
+      render((data && data.results) || []);
+    } catch(e) { render([]); }
   }
 
   let debounce;
-  $input.addEventListener('input', () => {
-    const q = $input.value.trim();
-    if (q === lastQuery) return;
-    lastQuery = q;
-    clearTimeout(debounce);
-    if (q.length < 3) { hideList(); return; }
-    debounce = setTimeout(() => fetchSug(q), 180);
-  });
+  if ($input) {
+    $input.addEventListener('input', () => {
+      const q = $input.value.trim();
+      if (q === lastQuery) return;
+      lastQuery = q;
+      clearTimeout(debounce);
+      if (q.length < 3) { hideList(); return; }
+      debounce = setTimeout(() => fetchSug(q), 180);
+    });
+    $input.addEventListener('focus', () => {
+      if (($list.innerHTML || '').trim().length) showList();
+    });
+  }
+
+  if ($open) {
+    $open.addEventListener('click', (e) => {
+      e.preventDefault();
+      // Carga sugerencias incluso con q vacío
+      fetchSug(($input && $input.value.trim()) || '');
+    });
+  }
 
   document.addEventListener('click', (e) => {
-    if (!document.getElementById('ac-wrapper').contains(e.target)) hideList();
-  });
-
-  $input.addEventListener('focus', () => {
-    if (($list.innerHTML || '').trim().length) showList();
+    if ($wrap && !$wrap.contains(e.target)) hideList();
   });
 
   document.addEventListener('DOMContentLoaded', function () {
@@ -160,7 +169,7 @@
 
 {% if encabezado %}
   <div class="print-area is-comfy reveal">
-    <!-- Cabecera tipo formulario -->
+    <!-- Cabecera -->
     <div class="row g-3">
       <div class="col-md-6">
         <p class="mb-1"><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
@@ -198,10 +207,10 @@
             {% for r in rows %}
               <tr>
                 <td class="nowrap">{{ r.fecha }}</td>
-                <td class="text-end tnum nowrap">{{ r.cantidad_ingreso|default:""|floatformat:"2" }}</td>
-                <td class="text-end tnum nowrap">{{ r.cantidad_egreso|default:""|floatformat:"2" }}</td>
-                <td class="text-end tnum nowrap">{{ r.saldo_anterior|default:""|floatformat:"2" }}</td>
-                <td class="text-end tnum nowrap">{{ r.saldo_actual|default:""|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.cantidad_ingreso|default_if_none:0|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.cantidad_egreso|default_if_none:0|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.saldo_anterior|default_if_none:0|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.saldo_actual|default_if_none:0|floatformat:"2" }}</td>
                 <td class="tnum nowrap">{{ r.no_receta }}</td>
                 <td>{{ r.nombre_paciente }}</td>
                 <td>{{ r.nombre_medico }}</td>
@@ -213,10 +222,10 @@
           <tfoot>
             <tr class="fw-semibold">
               <td class="text-end">Totales:</td>
-              <td class="text-end tnum nowrap">{{ sum_ingresos|default:"0"|floatformat:"2" }}</td>
-              <td class="text-end tnum nowrap">{{ sum_egresos|default:"0"|floatformat:"2" }}</td>
-              <td class="text-end tnum nowrap">{{ saldo_inicial|default:"0"|floatformat:"2" }}</td>
-              <td class="text-end tnum nowrap">{{ saldo_final|default:"0"|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ sum_ingresos|default_if_none:0|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ sum_egresos|default_if_none:0|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ saldo_inicial|default_if_none:0|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ saldo_final|default_if_none:0|floatformat:"2" }}</td>
               <td colspan="5"></td>
             </tr>
           </tfoot>

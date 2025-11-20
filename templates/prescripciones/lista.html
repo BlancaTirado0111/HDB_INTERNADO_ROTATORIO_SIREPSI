@@ -50,7 +50,7 @@
       {% endif %}
     </select>
     {% if not almacenes or not almacenes|length %}
-      <div class="form-text">No se pudo cargar la lista de almacenes desde la BD. Se usará el #{{ alm }}.</div>
+      <div class="form-text">Usando almacén #{{ alm }}.</div>
     {% endif %}
   </div>
 
@@ -84,12 +84,13 @@
   </div>
 </form>
 
-<!-- Autocomplete, misma API que Kardex -->
+<!-- Autocomplete (misma API que Kardex) -->
 <script>
 (function() {
   const $input = document.getElementById('input-medicamento');
   const $list  = document.getElementById('ac-list');
   const $wrap  = document.getElementById('ac-wrapper');
+  const $open  = document.getElementById('btn-open-list');
   let lastQuery = '';
   let controller = null;
   let debounce;
@@ -110,7 +111,6 @@
   function render(items) {
     if (!$list) return;
     if (!items.length) { hideList(); return; }
-
     $list.innerHTML = '';
     items.forEach((it) => {
       const a = document.createElement('a');
@@ -118,11 +118,11 @@
       a.className = 'list-group-item list-group-item-action';
       a.role = 'option';
       a.setAttribute('aria-selected', 'false');
-      a.textContent = it.label;
+      a.textContent = it.label;                 // ← mantiene "N#### — Nombre"
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
         if ($input) {
-          $input.value = it.label.replace(/^([A-Z0-9]+)\s+—\s+/i, '');
+          $input.value = it.label;              // ← NO se quita el código
           $input.focus();
         }
         hideList();
@@ -133,7 +133,6 @@
   }
 
   async function fetchSug(q) {
-    if (!$input) return;
     if (controller) controller.abort();
     controller = new AbortController();
     const url = "{% url 'meds_suggest' %}?q=" + encodeURIComponent(q);
@@ -142,9 +141,7 @@
       if (!res.ok) return render([]);
       const data = await res.json();
       render((data && data.results) || []);
-    } catch (e) {
-      render([]);
-    }
+    } catch (e) { render([]); }
   }
 
   if ($input) {
@@ -156,9 +153,15 @@
       if (q.length < 3) { hideList(); return; }
       debounce = setTimeout(() => fetchSug(q), 180);
     });
-
     $input.addEventListener('focus', () => {
       if (($list && $list.innerHTML || '').trim().length) showList();
+    });
+  }
+
+  if ($open) {
+    $open.addEventListener('click', (e) => {
+      e.preventDefault();
+      fetchSug(($input && $input.value.trim()) || '');
     });
   }
 
