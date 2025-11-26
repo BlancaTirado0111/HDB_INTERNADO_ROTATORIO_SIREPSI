@@ -101,10 +101,10 @@
       const a = document.createElement('a');
       a.href = '#';
       a.className = 'list-group-item list-group-item-action';
-      a.textContent = it.label;               // ← mantiene "N#### — Nombre"
+      a.textContent = it.label;  // N#### — Nombre
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
-        $input.value = it.label;              // ← NO se quita el código
+        $input.value = it.label;
         hideList();
       });
       $list.appendChild(a);
@@ -121,7 +121,9 @@
       if (!res.ok) return render([]);
       const data = await res.json();
       render((data && data.results) || []);
-    } catch(e) { render([]); }
+    } catch(e) {
+      render([]);
+    }
   }
 
   let debounce;
@@ -142,7 +144,6 @@
   if ($open) {
     $open.addEventListener('click', (e) => {
       e.preventDefault();
-      // Carga sugerencias incluso con q vacío
       fetchSug(($input && $input.value.trim()) || '');
     });
   }
@@ -169,7 +170,7 @@
 
 {% if encabezado %}
   <div class="print-area is-comfy reveal">
-    <!-- Cabecera -->
+    <!-- Cabecera con datos del medicamento -->
     <div class="row g-3">
       <div class="col-md-6">
         <p class="mb-1"><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
@@ -199,22 +200,36 @@
               <th>N° Receta</th>
               <th>Nombre del Paciente</th>
               <th>Nombre Médico</th>
+              <th>Nombre comercial</th>
               <th>N° de Factura</th>
-              <th>Observaciones</th>
+              <th>Registro sanitario</th>
+              <th>Responsable de dispensación</th>
+              <th>Observaciones</th>  <!-- SIEMPRE ÚLTIMO -->
             </tr>
           </thead>
           <tbody>
             {% for r in rows %}
               <tr>
                 <td class="nowrap">{{ r.fecha }}</td>
-                <td class="text-end tnum nowrap">{{ r.cantidad_ingreso|default_if_none:0|floatformat:"2" }}</td>
-                <td class="text-end tnum nowrap">{{ r.cantidad_egreso|default_if_none:0|floatformat:"2" }}</td>
-                <td class="text-end tnum nowrap">{{ r.saldo_anterior|default_if_none:0|floatformat:"2" }}</td>
-                <td class="text-end tnum nowrap">{{ r.saldo_actual|default_if_none:0|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">
+                  {{ r.cantidad_ingreso|default_if_none:0|floatformat:"2" }}
+                </td>
+                <td class="text-end tnum nowrap">
+                  {{ r.cantidad_egreso|default_if_none:0|floatformat:"2" }}
+                </td>
+                <td class="text-end tnum nowrap">
+                  {{ r.saldo_anterior|default_if_none:0|floatformat:"2" }}
+                </td>
+                <td class="text-end tnum nowrap">
+                  {{ r.saldo_actual|default_if_none:0|floatformat:"2" }}
+                </td>
                 <td class="tnum nowrap">{{ r.no_receta }}</td>
                 <td>{{ r.nombre_paciente }}</td>
                 <td>{{ r.nombre_medico }}</td>
+                <td>{{ r.nombre_comercial }}</td>
                 <td class="tnum nowrap">{{ r.nro_factura|default_if_none:'' }}</td>
+                <td>{{ r.registro_sanitario }}</td>
+                <td>{{ r.responsable_dispensacion }}</td>
                 <td>{{ r.observaciones }}</td>
               </tr>
             {% endfor %}
@@ -222,11 +237,20 @@
           <tfoot>
             <tr class="fw-semibold">
               <td class="text-end">Totales:</td>
-              <td class="text-end tnum nowrap">{{ sum_ingresos|default_if_none:0|floatformat:"2" }}</td>
-              <td class="text-end tnum nowrap">{{ sum_egresos|default_if_none:0|floatformat:"2" }}</td>
-              <td class="text-end tnum nowrap">{{ saldo_inicial|default_if_none:0|floatformat:"2" }}</td>
-              <td class="text-end tnum nowrap">{{ saldo_final|default_if_none:0|floatformat:"2" }}</td>
-              <td colspan="5"></td>
+              <td class="text-end tnum nowrap">
+                {{ sum_ingresos|default_if_none:0|floatformat:"2" }}
+              </td>
+              <td class="text-end tnum nowrap">
+                {{ sum_egresos|default_if_none:0|floatformat:"2" }}
+              </td>
+              <td class="text-end tnum nowrap">
+                {{ saldo_inicial|default_if_none:0|floatformat:"2" }}
+              </td>
+              <td class="text-end tnum nowrap">
+                {{ saldo_final|default_if_none:0|floatformat:"2" }}
+              </td>
+              <!-- 1 (Totales) + 4 numéricos + 8 vacíos = 13 columnas -->
+              <td colspan="8"></td>
             </tr>
           </tfoot>
         </table>
@@ -236,6 +260,8 @@
         No se encontraron movimientos para el rango indicado.
       </div>
     {% endif %}
+  
+
   </div>
 {% endif %}
 

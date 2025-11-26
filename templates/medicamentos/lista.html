@@ -8,16 +8,29 @@
 <!-- Bloque de filtros -->
 <div class="mb-4 p-3 p-md-4 bg-white border rounded-3 shadow-sm">
   <form method="get" class="row g-3 align-items-end">
-    <!-- Buscar -->
+    <!-- Buscar (con autocompletado como Kardex) -->
     <div class="col-12 col-md-5">
-      <label class="form-label">Buscar</label>
-      <input
-        type="text"
-        name="q"
-        class="form-control"
-        placeholder="Nombre, DCI, código…"
-        value="{{ q|default:'' }}"
-      >
+      <label class="form-label" for="input-medicamento">Buscar</label>
+      <div class="input-group position-relative" id="ac-wrapper">
+        <input
+          type="text"
+          name="q"
+          id="input-medicamento"
+          class="form-control"
+          placeholder="Escribe al menos 3 letras o abre la lista…"
+          autocomplete="off"
+          value="{{ q|default:'' }}"
+        >
+        <button class="btn btn-outline-secondary" type="button" id="btn-open-list" aria-label="Abrir lista de medicamentos">
+          <i class="bi bi-search"></i>
+        </button>
+
+        <!-- Panel de sugerencias -->
+        <div id="ac-panel"
+             class="list-group position-absolute w-100 shadow-sm"
+             style="z-index:1080; display:none; max-height:280px; overflow:auto; top:100%; left:0;">
+        </div>
+      </div>
     </div>
 
     <!-- Laboratorio -->
@@ -147,5 +160,100 @@
     {% endif %}
   </ul>
 </nav>
+
+<!-- ===== Autocomplete JS (igual que Kardex) ===== -->
+<script>
+(function() {
+  const input   = document.getElementById('input-medicamento');
+  const wrapper = document.getElementById('ac-wrapper');
+  const btnList = document.getElementById('btn-open-list');
+  const panel   = document.getElementById('ac-panel');
+  const SUG_URL = "{% url 'meds_suggest' %}";
+
+  let controller = null;
+  let debounceId = null;
+  let selIndex = -1;
+
+  function hide() {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    selIndex = -1;
+  }
+  function show(items) {
+    panel.innerHTML = '';
+    if (!items || !items.length) { hide(); return; }
+    items.forEach((it, idx) => {
+      const a = document.createElement('a');
+      a.href = '#';
+      a.className = 'list-group-item list-group-item-action';
+      a.textContent = it.label;        // "N0106 — Fentanilo sin conservante"
+      a.dataset.code = it.code;        // "N0106"
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        input.value = it.code;         // usamos el código para buscar rápido
+        hide();
+        input.form.submit();
+      });
+      panel.appendChild(a);
+    });
+    selIndex = -1;
+    panel.style.display = 'block';
+  }
+  function fetchSuggest(q) {
+    try { controller?.abort(); } catch(e) {}
+    controller = new AbortController();
+    const url = q ? (SUG_URL + '?q=' + encodeURIComponent(q)) : SUG_URL;
+    fetch(url, { signal: controller.signal })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => show(data.results || []))
+      .catch(() => {});
+  }
+
+  // Escribir → sugerencias
+  input.addEventListener('input', () => {
+    const v = input.value.trim();
+    clearTimeout(debounceId);
+    debounceId = setTimeout(() => {
+      if (v.length >= 3) fetchSuggest(v); else hide();
+    }, 250);
+  });
+
+  // Botón abrir lista completa
+  btnList?.addEventListener('click', () => {
+    fetchSuggest('');
+    input.focus();
+  });
+
+  // Cerrar si se hace click fuera
+  document.addEventListener('click', (ev) => {
+    if (!wrapper.contains(ev.target)) hide();
+  });
+
+  // Navegación con teclado
+  input.addEventListener('keydown', (ev) => {
+    const items = Array.from(panel.querySelectorAll('.list-group-item'));
+    if (!items.length) return;
+    if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      selIndex = (selIndex + 1) % items.length;
+      items.forEach(el => el.classList.remove('active'));
+      items[selIndex].classList.add('active');
+      items[selIndex].scrollIntoView({ block: 'nearest' });
+    } else if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      selIndex = (selIndex <= 0 ? items.length - 1 : selIndex - 1);
+      items.forEach(el => el.classList.remove('active'));
+      items[selIndex].classList.add('active');
+      items[selIndex].scrollIntoView({ block: 'nearest' });
+    } else if (ev.key === 'Enter' && selIndex >= 0) {
+      ev.preventDefault();
+      const el = items[selIndex];
+      input.value = el.dataset.code;
+      hide();
+      input.form.submit();
+    }
+  });
+})();
+</script>
 
 {% endblock %}

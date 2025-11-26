@@ -1,3 +1,4 @@
+# sirepsi/views.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -27,6 +28,7 @@ try:
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
+
     HAS_REPORTLAB = True
 except Exception:
     HAS_REPORTLAB = False
@@ -37,6 +39,7 @@ try:
     from openpyxl.styles import Font, Border, Side, Alignment
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.properties import PageSetupProperties
+
     HAS_OPENPYXL = True
 except Exception:
     HAS_OPENPYXL = False
@@ -454,6 +457,28 @@ def _resolve_med_by_name_or_code(name_or_code: str) -> Optional[Dict[str, Any]]:
     return result
 
 
+def _recalcular_saldos(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Ajusta saldo_anterior para que en cada fila sea el saldo_actual de la fila anterior.
+    saldo_actual = saldo_anterior + ingreso - egreso
+    """
+    saldo_actual_prev: Optional[float] = None
+    for r in rows:
+        ingreso = float(r.get("cantidad_ingreso") or 0)
+        egreso = float(r.get("cantidad_egreso") or 0)
+        if saldo_actual_prev is None:
+            # Primera fila: respeta saldo_anterior que viene de la BD
+            saldo_ant = float(r.get("saldo_anterior") or 0)
+        else:
+            # Desde la segunda fila: usar el saldo_actual previo
+            saldo_ant = saldo_actual_prev
+            r["saldo_anterior"] = saldo_ant
+        saldo_act = saldo_ant + ingreso - egreso
+        r["saldo_actual"] = saldo_act
+        saldo_actual_prev = saldo_act
+    return rows
+
+
 def movimientos_kardex(request):
     """
     Vista Kardex con filtro de ALMACÉN.
@@ -467,7 +492,7 @@ def movimientos_kardex(request):
     alm_int, alm_msg, alm_lista_ok = _resolver_almacen(request.GET, almacenes)
 
     ctx = {
-        "q": q,                      # 🔸 se mantiene CRUDO (no se sobreescribe)
+        "q": q,                      # se mantiene CRUDO
         "desde": desde,
         "hasta": hasta,
         "alm": alm_int,
@@ -522,6 +547,7 @@ def movimientos_kardex(request):
             fecha_desde=d_desde,
             fecha_hasta=d_hasta,
         )
+        rows = _recalcular_saldos(rows)
         cache.set(cache_key, (enc, rows), KARDEX_CACHE_TTL)
     else:
         enc, rows = data
@@ -529,7 +555,6 @@ def movimientos_kardex(request):
 
     if not rows:
         ctx.update({
-            # 🔸 NO toco ctx["q"]
             "encabezado": {
                 "nombre": enc.get("nombre_del_producto", med["nombre"]),
                 "dci": enc.get("dci", med["dci"]),
@@ -552,7 +577,6 @@ def movimientos_kardex(request):
     saldo_fin = float(rows[-1].get("saldo_actual") or saldo_ini)
 
     ctx.update({
-        # 🔸 NO toco ctx["q"]
         "encabezado": {
             "nombre": enc.get("nombre_del_producto", med["nombre"]),
             "dci": enc.get("dci", med["dci"]),
@@ -587,7 +611,7 @@ def prescripciones(request):
     alm_int, alm_msg, alm_lista_ok = _resolver_almacen(request.GET, almacenes)
 
     ctx = {
-        "q": q,  # 🔸 se mantiene CRUDO
+        "q": q,
         "medico": medico,
         "desde": desde,
         "hasta": hasta,
@@ -648,7 +672,6 @@ def prescripciones(request):
 
     if not rows:
         ctx.update({
-            # 🔸 NO toco ctx["q"]
             "encabezado": {
                 "nombre": enc.get("nombre_del_producto", med["nombre"]),
                 "dci": enc.get("dci", med["dci"]),
@@ -672,7 +695,10 @@ def prescripciones(request):
     rows_filtradas = rows
     if medico:
         m_ref = medico.strip().lower()
-        rows_filtradas = [r for r in rows if (r.get("nombre_medico") or "").strip().lower() == m_ref]
+        rows_filtradas = [
+            r for r in rows
+            if (r.get("nombre_medico") or "").strip().lower() == m_ref
+        ]
 
     total = len(rows_filtradas)
     pacientes = len({
@@ -685,7 +711,6 @@ def prescripciones(request):
     })
 
     ctx.update({
-        # 🔸 NO toco ctx["q"]
         "encabezado": {
             "nombre": enc.get("nombre_del_producto", med["nombre"]),
             "dci": enc.get("dci", med["dci"]),
@@ -736,7 +761,9 @@ def _resolver_kardex_dataset(request):
 
     # límite 3 meses también en export
     if (d_hasta - d_desde).days > 92:
-        raise ValueError("Por rendimiento, el Kardex solo permite exportar rangos de hasta 3 meses (92 días).")
+        raise ValueError(
+            "Por rendimiento, el Kardex solo permite exportar rangos de hasta 3 meses (92 días)."
+        )
 
     med = _resolve_med_by_name_or_code(q)
     if not med:
@@ -757,6 +784,7 @@ def _resolver_kardex_dataset(request):
             fecha_desde=d_desde,
             fecha_hasta=d_hasta,
         )
+        rows = _recalcular_saldos(rows)
         cache.set(cache_key, (enc, rows), KARDEX_CACHE_TTL)
     else:
         enc, rows = data
@@ -783,7 +811,9 @@ def export_kardex_csv(request):
     try:
         enc, rows, d_desde, d_hasta, alm, med = _resolver_kardex_dataset(request)
     except Exception as e:
-        return HttpResponse(f"Error: {e}", status=400, content_type="text/plain; charset=utf-8")
+        return HttpResponse(
+            f"Error: {e}", status=400, content_type="text/plain; charset=utf-8"
+        )
 
     base = _build_med_label(enc, med)
     filename = f"KARDEX_{base}DEL{d_desde}AL{d_hasta}.csv"
@@ -794,6 +824,7 @@ def export_kardex_csv(request):
     resp.write("\ufeff")  # BOM
     w = csv.writer(resp, lineterminator="\r\n")
 
+    # Cabecera
     w.writerow(["KARDEX"])
     w.writerow([f"Producto: {enc.get('nombre_del_producto','')}"])
     w.writerow([f"Código: {codigo}"])
@@ -805,6 +836,7 @@ def export_kardex_csv(request):
     w.writerow([f"Almacén: #{alm}"])
     w.writerow([])
 
+    # 13 columnas (igual que la tabla HTML)
     headers = [
         "Fecha",
         "Cantidad Ingreso",
@@ -814,7 +846,10 @@ def export_kardex_csv(request):
         "N° Receta",
         "Nombre del Paciente",
         "Nombre Médico",
+        "Nombre comercial",
         "N° de Factura",
+        "Registro sanitario",
+        "Responsable de dispensación",
         "Observaciones",
     ]
     w.writerow(headers)
@@ -829,7 +864,10 @@ def export_kardex_csv(request):
             r.get("no_receta", ""),
             r.get("nombre_paciente", ""),
             r.get("nombre_medico", ""),
+            r.get("nombre_comercial", ""),
             r.get("nro_factura", ""),
+            r.get("registro_sanitario", ""),
+            r.get("responsable_dispensacion", ""),
             (r.get("observaciones", "") or "").replace("\r", " ").replace("\n", " "),
         ])
 
@@ -838,33 +876,49 @@ def export_kardex_csv(request):
 
 def export_kardex_xlsx(request):
     if not HAS_OPENPYXL:
-        return HttpResponse("Falta dependencia: openpyxl. Instala con: pip install openpyxl",
-                            status=501, content_type="text/plain; charset=utf-8")
+        return HttpResponse(
+            "Falta dependencia: openpyxl. Instala con: pip install openpyxl",
+            status=501,
+            content_type="text/plain; charset=utf-8",
+        )
     try:
         enc, rows, d_desde, d_hasta, alm, med = _resolver_kardex_dataset(request)
     except Exception as e:
-        return HttpResponse(f"Error: {e}", status=400, content_type="text/plain; charset=utf-8")
+        return HttpResponse(
+            f"Error: {e}", status=400, content_type="text/plain; charset=utf-8"
+        )
 
     base = _build_med_label(enc, med)
     filename = f"KARDEX_{base}DEL{d_desde}AL{d_hasta}.xlsx"
-    codigo = enc.get("codificacion") or med.get("codificacion", "")
 
+    # Encabezados (13 columnas)
     headers = [
-        "Fecha", "Cantidad Ingreso", "Cantidad Egreso", "Saldo Anterior",
-        "Saldo Actual", "N° Receta", "Nombre del Paciente",
-        "Nombre Médico", "N° de Factura", "Observaciones",
+        "Fecha",
+        "Cantidad Ingreso",
+        "Cantidad Egreso",
+        "Saldo Anterior",
+        "Saldo Actual",
+        "N° Receta",
+        "Nombre del Paciente",
+        "Nombre Médico",
+        "Nombre comercial",
+        "N° de Factura",
+        "Registro sanitario",
+        "Responsable de dispensación",
+        "Observaciones",
     ]
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Kardex"
 
+    # Título
     ws["A1"] = "KARDEX"
     ws["A1"].font = Font(bold=True, size=14)
 
+    # Meta
     meta = [
         f"Producto: {enc.get('nombre_del_producto', '')}",
-        f"Código: {codigo}",
         f"DCI: {enc.get('dci', '')}",
         f"Concentración: {enc.get('concentracion', '')}",
         f"Presentación: {enc.get('presentacion', '')}",
@@ -876,8 +930,9 @@ def export_kardex_xlsx(request):
     for line in meta:
         ws.cell(row=row_idx, column=1, value=line)
         row_idx += 1
-    row_idx += 1  # blanco
+    row_idx += 1  # línea en blanco
 
+    # Encabezados
     header_row = row_idx
     for col_idx, title in enumerate(headers, start=1):
         cell = ws.cell(row=header_row, column=col_idx, value=title)
@@ -892,6 +947,7 @@ def export_kardex_xlsx(request):
                 return val
         return val
 
+    # Datos
     for r in rows:
         row_idx += 1
         values = [
@@ -903,18 +959,33 @@ def export_kardex_xlsx(request):
             r.get("no_receta", ""),
             r.get("nombre_paciente", ""),
             r.get("nombre_medico", ""),
+            r.get("nombre_comercial", ""),
             r.get("nro_factura", ""),
+            r.get("registro_sanitario", ""),
+            r.get("responsable_dispensacion", ""),
             (r.get("observaciones", "") or "").replace("\r", " ").replace("\n", " "),
         ]
         for col_idx, value in enumerate(values, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)
 
+    # Bordes
     thin = Side(border_style="thin", color="000000")
-    for row in ws.iter_rows(min_row=header_row, max_row=ws.max_row, min_col=1, max_col=len(headers)):
+    for row in ws.iter_rows(
+        min_row=header_row,
+        max_row=ws.max_row,
+        min_col=1,
+        max_col=len(headers),
+    ):
         for cell in row:
             cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
 
-    for row in ws.iter_rows(min_row=header_row + 1, max_row=ws.max_row, min_col=1, max_col=len(headers)):
+    # Formato / alineación
+    for row in ws.iter_rows(
+        min_row=header_row + 1,
+        max_row=ws.max_row,
+        min_col=1,
+        max_col=len(headers),
+    ):
         for cell in row:
             col = cell.column
             if col == 1:
@@ -923,18 +994,30 @@ def export_kardex_xlsx(request):
             elif col in (2, 3, 4, 5):
                 cell.number_format = "0.00"
                 cell.alignment = Alignment(horizontal="right")
-            elif col in (7, 8, 10):
+            elif col in (7, 8, 9, 11, 12, 13):
                 cell.alignment = Alignment(horizontal="left", wrap_text=True)
             else:
                 cell.alignment = Alignment(horizontal="left")
 
-    widths = [12, 14, 14, 14, 14, 14, 26, 26, 14, 30]
+    # Anchos de columna (13)
+    widths = [
+        12,  # Fecha
+        14, 14, 14, 14,  # Cantidades / saldos
+        14,  # N° Receta
+        26,  # Paciente
+        26,  # Médico
+        20,  # Nombre comercial
+        14,  # N° Factura
+        18,  # Registro sanitario
+        22,  # Responsable
+        30,  # Observaciones
+    ]
     for col_idx, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
     ws.freeze_panes = ws[f"A{header_row + 1}"]
 
-    # Config impresión
+    # Configuración de impresión
     ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
@@ -953,7 +1036,9 @@ def export_kardex_xlsx(request):
     bio.seek(0)
     resp = HttpResponse(
         bio.getvalue(),
-        content_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
     )
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
@@ -961,13 +1046,18 @@ def export_kardex_xlsx(request):
 
 def export_kardex_pdf(request):
     if not HAS_REPORTLAB:
-        return HttpResponse("Falta dependencia: reportlab. Instala con: pip install reportlab",
-                            status=501, content_type="text/plain; charset=utf-8")
+        return HttpResponse(
+            "Falta dependencia: reportlab. Instala con: pip install reportlab",
+            status=501,
+            content_type="text/plain; charset=utf-8",
+        )
 
     try:
         enc, rows, d_desde, d_hasta, alm, med = _resolver_kardex_dataset(request)
     except Exception as e:
-        return HttpResponse(f"Error: {e}", status=400, content_type="text/plain; charset=utf-8")
+        return HttpResponse(
+            f"Error: {e}", status=400, content_type="text/plain; charset=utf-8"
+        )
 
     base = _build_med_label(enc, med)
     filename = f"KARDEX_{base}DEL{d_desde}AL{d_hasta}.pdf"
@@ -984,6 +1074,7 @@ def export_kardex_pdf(request):
     )
     styles = getSampleStyleSheet()
     story = []
+
     story.append(Paragraph("<b>KARDEX</b>", styles["Title"]))
     meta_text = (
         f"Producto: {enc.get('nombre_del_producto','')} &nbsp;|&nbsp; "
@@ -999,10 +1090,22 @@ def export_kardex_pdf(request):
     story.append(Spacer(1, 8))
 
     headers = [
-        "Fecha", "Cant. Ingreso", "Cant. Egreso", "Saldo Ant.", "Saldo Act.",
-        "N° Receta", "Nombre del Paciente", "Nombre Médico", "N° Factura", "Observaciones",
+        "Fecha",
+        "Cant. Ingreso",
+        "Cant. Egreso",
+        "Saldo Ant.",
+        "Saldo Act.",
+        "N° Receta",
+        "Nombre del Paciente",
+        "Nombre Médico",
+        "Nombre comercial",
+        "N° Factura",
+        "Registro sanitario",
+        "Responsable de dispensación",
+        "Observaciones",
     ]
     data = [headers]
+
     for r in rows:
         data.append([
             r.get("fecha", ""),
@@ -1013,18 +1116,36 @@ def export_kardex_pdf(request):
             r.get("no_receta", ""),
             r.get("nombre_paciente", ""),
             r.get("nombre_medico", ""),
+            r.get("nombre_comercial", ""),
             r.get("nro_factura", ""),
+            r.get("registro_sanitario", ""),
+            r.get("responsable_dispensacion", ""),
             (r.get("observaciones", "") or "").replace("\r", " ").replace("\n", " "),
         ])
 
-    col_widths = [2.3*cm, 2.8*cm, 2.8*cm, 2.8*cm, 2.8*cm, 3.2*cm, 6.8*cm, 6.8*cm, 3.0*cm, 7.0*cm]
+    col_widths = [
+        2.3 * cm,  # Fecha
+        2.4 * cm,  # Ingreso
+        2.4 * cm,  # Egreso
+        2.4 * cm,  # Saldo ant.
+        2.4 * cm,  # Saldo act.
+        3.0 * cm,  # N° receta
+        5.5 * cm,  # Paciente
+        5.5 * cm,  # Médico
+        4.0 * cm,  # Nombre comercial
+        3.0 * cm,  # N° factura
+        3.2 * cm,  # Registro sanitario
+        4.5 * cm,  # Responsable
+        5.5 * cm,  # Observaciones
+    ]
+
     tbl = Table(data, colWidths=col_widths, repeatRows=1)
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
-        ("ALIGN", (1, 1), (4, -1), "RIGHT"),
+        ("ALIGN", (1, 1), (5, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f9f7")]),
