@@ -14,19 +14,14 @@ __all__ = [
     "prescripciones_detalle",
 ]
 
-# Alias de conexión usado por todo el módulo (visible en auditorías)
+# Alias de conexión usado por todo el módulo
 CONNECTION_ALIAS = "BDFarmacia"
 
 
 def query_bdfarmacia(sql: str, params: Optional[Sequence[Any]] = None) -> List[Dict[str, Any]]:
     """
     Ejecuta SELECTs en la conexión 'BDFarmacia' y retorna filas como lista de dicts.
-    - Placeholders: usar %s (parametrización segura).
-    - Llaves del dict: nombres de columnas en minúsculas.
-    - Si 'params' es None, se ejecuta sin segundo argumento.
-
-    Nota: Esta función no altera la consulta ni post-procesa datos más allá de
-    mapear nombres de columnas y empaquetar a dict.
+    Se devuelven los nombres de columnas en minúsculas.
     """
     rows: List[Dict[str, Any]] = []
 
@@ -45,15 +40,12 @@ def query_bdfarmacia(sql: str, params: Optional[Sequence[Any]] = None) -> List[D
 
 # ========= Helpers para búsqueda de medicamento =========
 
-
 def get_med_by_codificacion_or_codigo(term: str) -> Optional[Dict[str, Any]]:
     """
     Busca un medicamento por:
       - MED_CODIGO exacto (si 'term' es numérico),
       - MED_CODIFICACION exacta,
       - o coincidencia parcial en MED_COMERCIAL (LIKE %term%).
-
-    Retorna el primer match (TOP 1) como dict, o None si no hay resultados.
     """
     if term is None or str(term).strip() == "":
         return None
@@ -79,8 +71,7 @@ def get_med_by_codificacion_or_codigo(term: str) -> Optional[Dict[str, Any]]:
 
 def kardex_encabezado(med_codigo: int) -> Optional[Dict[str, Any]]:
     """
-    Obtiene los datos del encabezado a mostrar encima del Kardex:
-      nombre_del_producto, dci, concentracion, presentacion, laboratorio, origen.
+    Obtiene datos del encabezado del Kardex.
     """
     sql = """
         SELECT
@@ -89,7 +80,7 @@ def kardex_encabezado(med_codigo: int) -> Optional[Dict[str, Any]]:
           m.med_concentracion  AS concentracion,
           m.med_unidad         AS presentacion,
           p.PRO_NOMBRE         AS laboratorio,
-          NULL                 AS origen  -- cambia a p.PRO_PAIS si existiera
+          NULL                 AS origen  
         FROM dbo.fa_medicamento m
         LEFT JOIN dbo.fa_proveedor p ON p.Emp_Codigo = m.emp_codigo
         WHERE m.MED_CODIGO = %s;
@@ -98,6 +89,10 @@ def kardex_encabezado(med_codigo: int) -> Optional[Dict[str, Any]]:
     return rows[0] if rows else None
 
 
+# ======================================================
+#        🔧 K A R D E X   C O R R E G I D O 
+# ======================================================
+
 def kardex_detalle(
     med_codigo: int,
     almacen: int,
@@ -105,26 +100,9 @@ def kardex_detalle(
     fecha_hasta: date,
 ) -> List[Dict[str, Any]]:
     """
-    Devuelve filas del Kardex con Paciente/Médico + saldo anterior y saldo acumulado.
-
-    Columnas devueltas (keys):
-      - fecha (dd/mm/aaaa)
-      - cantidad_ingreso
-      - nombre_paciente
-      - nombre_medico
-      - no_receta
-      - cantidad_egreso
-      - saldo_anterior
-      - saldo_actual
-      - observaciones
-
-    Notas de la consulta:
-      - CTE 'mov_raw': base de movimientos válidos por almacén y medicamento.
-      - 'saldo_anterior': suma firmada de movimientos previos al rango.
-      - 'rango'/'qty': define el rango y aplica signo a la cantidad según clase/doc.
-      - Joins a Recibos/Recetarios para derivar paciente/médico de diversas fuentes.
-      - 'saldo_actual': saldo_anterior + acumulado firmado (ventana ordenada por fecha/receta).
+    Devuelve filas del Kardex SIN que aparezca 'None' en paciente o médico.
     """
+
     sql = """
     WITH mov_raw AS (
       SELECT
@@ -148,25 +126,28 @@ def kardex_detalle(
         AND n.ALM_CODIGO = %s
         AND m.MED_CODIGO = %s
     ),
+
     saldo_anterior AS (
       SELECT ISNULL(SUM(
         CASE 
           WHEN r.CLA_CODIGO = 1 AND ISNULL(r.DOC_CODIGO,0) <> 2 THEN  r.MOV_CANTIDAD
           WHEN r.CLA_CODIGO = 2 AND ISNULL(r.DOC_CODIGO,0) <> 2 THEN -r.MOV_CANTIDAD
-          WHEN r.CLA_CODIGO = 1 AND ISNULL(r.DOC_CODIGO,0)  = 2 THEN  r.MOV_CANTIDAD   -- ajustes +
-          WHEN r.CLA_CODIGO = 2 AND ISNULL(r.DOC_CODIGO,0)  = 2 THEN -r.MOV_CANTIDAD  -- ajustes -
+          WHEN r.CLA_CODIGO = 1 AND ISNULL(r.DOC_CODIGO,0)  = 2 THEN  r.MOV_CANTIDAD
+          WHEN r.CLA_CODIGO = 2 AND ISNULL(r.DOC_CODIGO,0)  = 2 THEN -r.MOV_CANTIDAD
           ELSE 0
         END
       ),0) AS saldo_ant
       FROM mov_raw r
       WHERE r.NOT_FECHA_MOV < %s
     ),
+
     rango AS (
       SELECT *
       FROM mov_raw
       WHERE NOT_FECHA_MOV >= %s
         AND NOT_FECHA_MOV <  DATEADD(day, 1, %s)
     ),
+
     qty AS (
       SELECT r.*,
              CASE 
@@ -178,7 +159,7 @@ def kardex_detalle(
              END AS qty_signed
       FROM rango r
     ),
-    -- Enlace a Recibos/Recetarios (normalizado a texto)
+
     rr AS (
       SELECT q.*,
              rrp.vclihiccli,
@@ -188,6 +169,7 @@ def kardex_detalle(
              ON rrp.vrectipdoc = q.CLA_CODIGO
             AND CONVERT(VARCHAR(25), rrp.vrecnumero) = CONVERT(VARCHAR(25), q.NOT_SEC_CLASE)
     ),
+
     nombres AS (
       SELECT rr.*,
              LTRIM(RTRIM(CONCAT(h.hcl_appat,' ',h.hcl_apmat,', ',h.hcl_nombre))) AS paciente_rr,
@@ -200,20 +182,37 @@ def kardex_detalle(
       LEFT JOIN dbo.rh_Personal       pac ON pac.per_Codigo = rr.PER_CODIGO
       LEFT JOIN dbo.Usuarios          usr ON usr.USU_CODIGO = rr.USU_CODIGO
     ),
+
     calc AS (
       SELECT
           n.NOT_FECHA_MOV AS fecha_dt,
           n.NOT_SEC_CLASE AS no_receta,
-          CASE WHEN n.qty_signed > 0 THEN n.qty_signed ELSE 0 END  AS cantidad_ingreso,
+
+          CASE WHEN n.qty_signed > 0 THEN n.qty_signed ELSE 0 END AS cantidad_ingreso,
           CASE WHEN n.qty_signed < 0 THEN -n.qty_signed ELSE 0 END AS cantidad_egreso,
-          COALESCE(NULLIF(n.paciente_rr,''), NULLIF(n.paciente_per,'')) AS nombre_paciente,
-          COALESCE(NULLIF(n.medico_rr,''),  NULLIF(n.medico_usr,''), CAST(n.USU_CODIGO AS varchar(20))) AS nombre_medico,
+
+          -- 🔧 AQUÍ SE CORRIGE: jamás devolver NULL
+          ISNULL(
+              COALESCE(NULLIF(n.paciente_rr,''), NULLIF(n.paciente_per,'')),
+              ''
+          ) AS nombre_paciente,
+
+          ISNULL(
+              COALESCE(
+                NULLIF(n.medico_rr,''),
+                NULLIF(n.medico_usr,''),
+                CAST(n.USU_CODIGO AS varchar(20))
+              ),
+              ''
+          ) AS nombre_medico,
+
           NULLIF(LTRIM(RTRIM(n.NOT_OBSERVACIONES)), '') AS observaciones,
           n.qty_signed
       FROM nombres n
     )
+
     SELECT
-      CONVERT(VARCHAR(10), c.fecha_dt, 103) AS fecha,    -- dd/mm/aaaa
+      CONVERT(VARCHAR(10), c.fecha_dt, 103) AS fecha,
       c.cantidad_ingreso,
       c.nombre_paciente,
       c.nombre_medico,
@@ -229,9 +228,14 @@ def kardex_detalle(
     FROM calc c
     ORDER BY c.fecha_dt, c.no_receta;
     """
+
     params = [almacen, med_codigo, fecha_desde, fecha_desde, fecha_hasta]
     return query_bdfarmacia(sql, params)
 
+
+# ======================================================
+#                  P R E S C R I P C I O N E S
+# ======================================================
 
 def prescripciones_detalle(
     med_codigo: int,
@@ -240,16 +244,7 @@ def prescripciones_detalle(
     fecha_hasta: date,
 ) -> List[Dict[str, Any]]:
     """
-    Devuelve la lista de prescripciones (egresos) para un medicamento y rango de fechas.
-
-    Columnas devueltas:
-      - fecha (dd/mm/aaaa)
-      - nombre_paciente
-      - nombre_medico
-      - no_receta
-      - observaciones
-
-    Nota: usamos qty_signed < 0 para filtrar EGRESOS (dispensaciones).
+    Devuelve la lista de prescripciones (egresos).
     """
     sql = """
     WITH mov_raw AS (
@@ -274,12 +269,14 @@ def prescripciones_detalle(
         AND n.ALM_CODIGO = %s
         AND m.MED_CODIGO = %s
     ),
+
     rango AS (
       SELECT *
       FROM mov_raw
       WHERE NOT_FECHA_MOV >= %s
         AND NOT_FECHA_MOV <  DATEADD(day, 1, %s)
     ),
+
     qty AS (
       SELECT r.*,
              CASE 
@@ -291,6 +288,7 @@ def prescripciones_detalle(
              END AS qty_signed
       FROM rango r
     ),
+
     rr AS (
       SELECT q.*,
              rrp.vclihiccli,
@@ -300,6 +298,7 @@ def prescripciones_detalle(
              ON rrp.vrectipdoc = q.CLA_CODIGO
             AND CONVERT(VARCHAR(25), rrp.vrecnumero) = CONVERT(VARCHAR(25), q.NOT_SEC_CLASE)
     ),
+
     nombres AS (
       SELECT rr.*,
              LTRIM(RTRIM(CONCAT(h.hcl_appat,' ',h.hcl_apmat,', ',h.hcl_nombre))) AS paciente_rr,
@@ -312,15 +311,17 @@ def prescripciones_detalle(
       LEFT JOIN dbo.rh_Personal       pac ON pac.per_Codigo = rr.PER_CODIGO
       LEFT JOIN dbo.Usuarios          usr ON usr.USU_CODIGO = rr.USU_CODIGO
     )
+
     SELECT
-      CONVERT(VARCHAR(10), n.NOT_FECHA_MOV, 103) AS fecha,    -- dd/mm/aaaa
-      COALESCE(NULLIF(n.paciente_rr,''), NULLIF(n.paciente_per,'')) AS nombre_paciente,
-      COALESCE(NULLIF(n.medico_rr,''),  NULLIF(n.medico_usr,''), CAST(n.USU_CODIGO AS varchar(20))) AS nombre_medico,
+      CONVERT(VARCHAR(10), n.NOT_FECHA_MOV, 103) AS fecha,
+      COALESCE(NULLIF(n.paciente_rr,''), NULLIF(n.paciente_per,''), '') AS nombre_paciente,
+      COALESCE(NULLIF(n.medico_rr,''),  NULLIF(n.medico_usr,''), CAST(n.USU_CODIGO AS varchar(20)), '') AS nombre_medico,
       n.NOT_SEC_CLASE AS no_receta,
       NULLIF(LTRIM(RTRIM(n.NOT_OBSERVACIONES)), '') AS observaciones
     FROM nombres n
-    WHERE n.qty_signed < 0   -- solo EGRESOS = prescripciones/dispensaciones
+    WHERE n.qty_signed < 0
     ORDER BY n.NOT_FECHA_MOV, n.NOT_SEC_CLASE;
     """
+
     params = [almacen, med_codigo, fecha_desde, fecha_hasta]
     return query_bdfarmacia(sql, params)

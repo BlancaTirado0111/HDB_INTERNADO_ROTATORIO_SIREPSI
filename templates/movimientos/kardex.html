@@ -81,7 +81,7 @@
   </div>
 </form>
 
-<!-- Autocomplete ligero -->
+<!-- Autocomplete script omitido para mantener tamaño -->
 <script>
 (function() {
   const $input = document.getElementById('input-medicamento');
@@ -101,7 +101,7 @@
       const a = document.createElement('a');
       a.href = '#';
       a.className = 'list-group-item list-group-item-action';
-      a.textContent = it.label;  // N#### — Nombre
+      a.textContent = it.label;
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
         $input.value = it.label;
@@ -170,7 +170,7 @@
 
 {% if encabezado %}
   <div class="print-area is-comfy reveal">
-    <!-- Cabecera con datos del medicamento -->
+    
     <div class="row g-3">
       <div class="col-md-6">
         <p class="mb-1"><strong>Nombre del producto:</strong> {{ encabezado.nombre }}</p>
@@ -204,27 +204,29 @@
               <th>N° de Factura</th>
               <th>Registro sanitario</th>
               <th>Responsable de dispensación</th>
-              <th>Observaciones</th>  <!-- SIEMPRE ÚLTIMO -->
+              <th>Observaciones</th>
             </tr>
           </thead>
           <tbody>
             {% for r in rows %}
               <tr>
                 <td class="nowrap">{{ r.fecha }}</td>
-                <td class="text-end tnum nowrap">
-                  {{ r.cantidad_ingreso|default_if_none:0|floatformat:"2" }}
-                </td>
-                <td class="text-end tnum nowrap">
-                  {{ r.cantidad_egreso|default_if_none:0|floatformat:"2" }}
-                </td>
-                <td class="text-end tnum nowrap">
-                  {{ r.saldo_anterior|default_if_none:0|floatformat:"2" }}
-                </td>
-                <td class="text-end tnum nowrap">
-                  {{ r.saldo_actual|default_if_none:0|floatformat:"2" }}
-                </td>
+
+                <td class="text-end tnum nowrap">{{ r.cantidad_ingreso|default_if_none:0|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.cantidad_egreso|default_if_none:0|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.saldo_anterior|default_if_none:0|floatformat:"2" }}</td>
+                <td class="text-end tnum nowrap">{{ r.saldo_actual|default_if_none:0|floatformat:"2" }}</td>
+
                 <td class="tnum nowrap">{{ r.no_receta }}</td>
-                <td>{{ r.nombre_paciente }}</td>
+
+                <!-- 🌟 CORRECCIÓN APLICADA AQUÍ -->
+                <td>
+                  {% if r.nombre_paciente and r.nombre_paciente != 'None' %}
+                      {{ r.nombre_paciente }}
+                  {% else %}
+                  {% endif %}
+                </td>
+
                 <td>{{ r.nombre_medico }}</td>
                 <td>{{ r.nombre_comercial }}</td>
                 <td class="tnum nowrap">{{ r.nro_factura|default_if_none:'' }}</td>
@@ -234,22 +236,16 @@
               </tr>
             {% endfor %}
           </tbody>
+
           <tfoot>
             <tr class="fw-semibold">
               <td class="text-end">Totales:</td>
-              <td class="text-end tnum nowrap">
-                {{ sum_ingresos|default_if_none:0|floatformat:"2" }}
-              </td>
-              <td class="text-end tnum nowrap">
-                {{ sum_egresos|default_if_none:0|floatformat:"2" }}
-              </td>
-              <td class="text-end tnum nowrap">
-                {{ saldo_inicial|default_if_none:0|floatformat:"2" }}
-              </td>
-              <td class="text-end tnum nowrap">
-                {{ saldo_final|default_if_none:0|floatformat:"2" }}
-              </td>
-              <!-- 1 (Totales) + 4 numéricos + 8 vacíos = 13 columnas -->
+
+              <td class="text-end tnum nowrap">{{ sum_ingresos|default_if_none:0|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ sum_egresos|default_if_none:0|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ saldo_inicial|default_if_none:0|floatformat:"2" }}</td>
+              <td class="text-end tnum nowrap">{{ saldo_final|default_if_none:0|floatformat:"2" }}</td>
+
               <td colspan="8"></td>
             </tr>
           </tfoot>
@@ -260,7 +256,6 @@
         No se encontraron movimientos para el rango indicado.
       </div>
     {% endif %}
-  
 
   </div>
 {% endif %}
